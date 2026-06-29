@@ -1,0 +1,20 @@
+[
+  {
+    "lane_id": "IL-TX",
+    "per_mile": 2.45,
+    "flat": 0,
+    "fuel_surcharge": 0.35
+  },
+  {
+    "lane_id": "CA-AZ",
+    "per_mile": 3.00,
+    "flat": 0,
+    "fuel_surcharge": 0.40
+  },
+  {
+    "lane_id": "GA-FL",
+    "per_mile": 2.70,
+    "flat": 0,
+    "fuel_surcharge": 0.30
+  }
+]

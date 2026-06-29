@@ -1,0 +1,23 @@
+[
+  {
+    "id": "D-001",
+    "name": "John Smith",
+    "mc_number": "MC123456",
+    "equipment": "Dry Van",
+    "hos_status": "available"
+  },
+  {
+    "id": "D-002",
+    "name": "Sarah Connor",
+    "mc_number": "MC654321",
+    "equipment": "Reefer",
+    "hos_status": "driving"
+  },
+  {
+    "id": "D-003",
+    "name": "Mike Ehrmantraut",
+    "mc_number": "MC111222",
+    "equipment": "Flatbed",
+    "hos_status": "available"
+  }
+]

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "1001",
+    "origin": "Chicago, IL",
+    "destination": "Dallas, TX",
+    "weight_lbs": 42000,
+    "commodity": "Auto Parts",
+    "equipment_type": "Dry Van",
+    "rate_per_mile": 2.50,
+    "status": "available",
+    "pickup_date": "2026-07-01",
+    "delivery_date": "2026-07-03"
+  },
+  {
+    "id": "1002",
+    "origin": "Los Angeles, CA",
+    "destination": "Phoenix, AZ",
+    "weight_lbs": 35000,
+    "commodity": "Produce",
+    "equipment_type": "Reefer",
+    "rate_per_mile": 3.10,
+    "status": "available",
+    "pickup_date": "2026-07-02",
+    "delivery_date": "2026-07-03"
+  },
+  {
+    "id": "1003",
+    "origin": "Atlanta, GA",
+    "destination": "Miami, FL",
+    "weight_lbs": 45000,
+    "commodity": "Building Materials",
+    "equipment_type": "Flatbed",
+    "rate_per_mile": 2.80,
+    "status": "booked",
+    "pickup_date": "2026-06-30",
+    "delivery_date": "2026-07-01"
+  }
+]

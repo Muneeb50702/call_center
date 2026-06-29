@@ -1,0 +1,15 @@
+[project]
+name = "tms-backend"
+version = "0.1.0"
+description = "FastAPI Mock TMS Backend"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
