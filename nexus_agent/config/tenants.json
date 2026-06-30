@@ -1,0 +1,36 @@
+{
+  "tenants": [
+    {
+      "tenant_id": "abc-logistics",
+      "company_name": "ABC Logistics",
+      "greeting_script": "",
+      "sip_numbers": ["+15550100", "+15550101"],
+      "human_transfer_number": "+15559999",
+      "tms_api_url": "http://tms-backend:8000",
+      "tms_api_key": "",
+      "voice_model": "aura-orion-en",
+      "custom_keywords": ["ABC Logistics"],
+      "negotiation_floor_pct": 0.90,
+      "max_negotiation_rounds": 3,
+      "max_concurrent_calls": 20,
+      "llm_model": "llama-3.1-8b-instant",
+      "llm_temperature": 0.0
+    },
+    {
+      "tenant_id": "paktruck-dispatch",
+      "company_name": "PakTruck Dispatch",
+      "greeting_script": "",
+      "sip_numbers": ["+15550200", "+15550201"],
+      "human_transfer_number": "+15558888",
+      "tms_api_url": "http://tms-backend:8000",
+      "tms_api_key": "",
+      "voice_model": "aura-asteria-en",
+      "custom_keywords": ["PakTruck", "PakTruck Dispatch"],
+      "negotiation_floor_pct": 0.85,
+      "max_negotiation_rounds": 4,
+      "max_concurrent_calls": 50,
+      "llm_model": "llama-3.3-70b-versatile",
+      "llm_temperature": 0.0
+    }
+  ]
+}

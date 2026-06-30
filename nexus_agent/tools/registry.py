@@ -1,26 +1,51 @@
-from tools.tms_tools import TMSTools
+"""
+Nexus Dispatch — Tool Registry (Utility Module)
 
-tms_tools = TMSTools()
+In the new architecture, each Agent subclass defines its own tools inline.
+This module is kept as a utility for:
+- Dynamic tool loading in fallback/test scenarios
+- Listing all available tools for diagnostics
+"""
 
-def get_tools_for_state(state: str) -> list:
+from state.machine import CallState
+
+
+def get_available_tool_names_for_state(state: str) -> list[str]:
     """
-    Returns a list of @function_tool decorated functions
-    based on the current conversation state.
+    Returns a list of tool names available in a given state.
+    Useful for diagnostics, logging, and the admin dashboard.
     """
-    if state == "GREETING" or state == "WRAP_UP":
+    state_tools = {
+        CallState.GREETING: [
+            "transition_to_qualification",
+            "transfer_to_human",
+        ],
+        CallState.QUALIFICATION: [
+            "search_loads",
+            "check_driver_availability",
+            "lookup_driver_by_mc",
+            "transition_to_negotiation",
+            "wrap_up_no_match",
+            "transfer_to_human",
+        ],
+        CallState.NEGOTIATION: [
+            "get_rate",
+            "negotiate_rate",
+            "transition_to_booking",
+            "go_back_to_qualification",
+            "transfer_to_human",
+        ],
+        CallState.BOOKING: [
+            "lookup_load",
+            "confirm_booking",
+            "transition_to_wrap_up",
+            "transfer_to_human",
+        ],
+        CallState.WRAP_UP: [
+            "end_call",
+        ],
+    }
+    try:
+        return state_tools.get(CallState(state), [])
+    except ValueError:
         return []
-    elif state == "QUALIFICATION":
-        return [tms_tools.search_loads, tms_tools.check_driver_availability]
-    elif state == "NEGOTIATION":
-        return [tms_tools.get_rate, tms_tools.negotiate_rate]
-    elif state == "BOOKING":
-        return [tms_tools.lookup_load]
-    
-    # Default fallback
-    return [
-        tms_tools.lookup_load,
-        tms_tools.search_loads,
-        tms_tools.get_rate,
-        tms_tools.negotiate_rate,
-        tms_tools.check_driver_availability
-    ]
