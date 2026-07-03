@@ -2,7 +2,7 @@
 Nexus Dispatch — Call Control Tools
 
 Production-critical tools for managing call lifecycle:
-- Warm transfer to human dispatcher
+- Warm transfer to senior dispatcher
 - Graceful call termination
 - Call hold functionality
 """
@@ -46,10 +46,10 @@ async def transfer_to_human_dispatcher(
     transfer_number: str = "",
 ) -> str:
     """
-    Warm-transfer the call to a human dispatcher.
+    Warm-transfer the call to a senior dispatcher.
     
     In production with SIP, this performs a SIP REFER to redirect
-    the caller to the human dispatcher's phone/extension.
+    the caller to the senior dispatcher's phone/extension.
     """
     fsm = ctx.session.userdata.get("state_machine")
     tenant = ctx.session.userdata.get("tenant_config", {})
@@ -72,9 +72,9 @@ async def transfer_to_human_dispatcher(
     if target_number:
         # In production: Use LiveKit's SIP transfer API
         # await room.transfer_participant(participant, f"sip:{target_number}")
-        return f"Transferring you to a human dispatcher at {target_number}. Reason: {reason}. Please hold."
+        return f"SYSTEM: Transferring to senior dispatcher at {target_number}. Tell the caller: 'I'm connecting you with one of our senior dispatchers now. Please hold.'"
     else:
-        return f"I'm connecting you with a human dispatcher now. Reason: {reason}. Please hold, someone will be with you shortly."
+        return f"SYSTEM: Connecting to senior dispatcher. Tell the caller: 'Let me get one of our senior team members for you. One moment please.'"
 
 
 async def hold_caller(ctx: RunContext, message: str = "") -> str:

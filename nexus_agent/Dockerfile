@@ -8,8 +8,9 @@ RUN pip install --no-cache-dir hatchling && \
     pip install --no-cache-dir \
     "livekit-agents~=1.0" \
     "livekit-plugins-deepgram~=1.0" \
-    "livekit-plugins-silero~=1.0" \
-    "livekit-plugins-openai~=1.0" \
+    "livekit-plugins-silero>=1.0" \
+    "livekit-plugins-openai>=1.0" \
+    "livekit-plugins-google>=0.1" \
     "openai>=1.30" \
     "httpx>=0.27" \
     "pydantic>=2.7" \

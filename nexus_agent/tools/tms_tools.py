@@ -95,9 +95,9 @@ class TMSTools:
             response = await self._request_with_retry("GET", f"/loads/{load_id}")
             if response.status_code == 200:
                 return str(response.json())
-            return "Load not found."
+            return f"No load found with ID {load_id}. Ask the caller to verify the load number."
         except Exception as e:
-            return f"Unable to look up load right now. System error: {str(e)}"
+            return f"Load lookup is temporarily slow. Try again in a moment. (Internal: {str(e)})"
 
     async def search_loads(
         self,
@@ -118,10 +118,10 @@ class TMSTools:
             response = await self._request_with_retry("GET", "/loads/search", params=params)
             data = response.json()
             if not data:
-                return "No loads found matching those criteria."
+                return "No loads found matching those criteria right now. Ask the caller if they'd be open to nearby cities or a different equipment type."
             return str(data)
         except Exception as e:
-            return f"Unable to search loads right now. System error: {str(e)}"
+            return f"Load search is temporarily slow. Try the search again. (Internal: {str(e)})"
 
     async def get_rate(self, lane_id: str) -> str:
         """Get the current base rate for a specific lane."""
@@ -130,9 +130,9 @@ class TMSTools:
             response = await self._request_with_retry("GET", f"/rates/{lane_id}")
             if response.status_code == 200:
                 return str(response.json())
-            return "Rate not found for that lane."
+            return f"Rate not available for lane {lane_id} at the moment. Try again."
         except Exception as e:
-            return f"Unable to fetch rate right now. System error: {str(e)}"
+            return f"Rate lookup is temporarily slow. Try again in a moment. (Internal: {str(e)})"
 
     async def negotiate_rate(self, lane_id: str, counter_offer: float) -> str:
         """Negotiate a rate for a lane by providing a counter-offer in USD per mile."""
@@ -145,9 +145,9 @@ class TMSTools:
             )
             if response.status_code == 200:
                 return str(response.json())
-            return "Negotiation failed. The system could not process this offer."
+            return "The system couldn't process that offer right now. Try submitting the offer again."
         except Exception as e:
-            return f"Unable to process negotiation right now. System error: {str(e)}"
+            return f"Negotiation system is temporarily slow. Try again. (Internal: {str(e)})"
 
     async def check_driver_availability(self, equipment: str = "") -> str:
         """Check available drivers, optionally filtered by equipment type."""
@@ -157,10 +157,10 @@ class TMSTools:
             response = await self._request_with_retry("GET", "/drivers/available", params=params)
             data = response.json()
             if not data:
-                return "No available drivers found matching that equipment type."
+                return "No available drivers found for that equipment type right now."
             return str(data)
         except Exception as e:
-            return f"Unable to check driver availability. System error: {str(e)}"
+            return f"Driver availability check is temporarily slow. Try again. (Internal: {str(e)})"
 
     async def lookup_driver_by_mc(self, mc_number: str) -> str:
         """Look up a driver's details using their MC number."""
@@ -173,9 +173,9 @@ class TMSTools:
             )
             if response.status_code == 200:
                 return str(response.json())
-            return f"No driver found with MC number {mc_number}."
+            return f"MC number {mc_number} not found in our system. Ask the caller to spell it out or provide their name instead."
         except Exception as e:
-            return f"Unable to look up driver. System error: {str(e)}"
+            return f"Driver lookup is temporarily slow. Try again. (Internal: {str(e)})"
 
     async def close(self):
         """Close the HTTP client."""

@@ -74,7 +74,7 @@ class TenantConfig(BaseModel):
 
     # LLM Configuration
     llm_model: str = Field(
-        default="llama-3.1-8b-instant",
+        default="gemini-1.5-flash",
         description="Groq model to use for this tenant",
     )
     llm_temperature: float = Field(

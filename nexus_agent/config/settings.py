@@ -10,6 +10,7 @@ class NexusSettings(BaseSettings):
     # API keys
     deepgram_api_key: str
     groq_api_key: str
+    gemini_api_key: str = ""
 
     # LLM tiers
     tier1_model: str = "llama-3.1-8b-instant"

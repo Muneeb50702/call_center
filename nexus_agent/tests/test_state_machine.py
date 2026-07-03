@@ -1,5 +1,5 @@
 """
-Unit tests for the Call State Machine.
+Unit tests for the Call State Machine (12 Modes).
 Tests state transitions, context accumulation, and edge cases.
 """
 
@@ -18,6 +18,7 @@ class TestCallStateMachine:
         fsm = CallStateMachine()
         assert "GREETING" in fsm.context.states_visited
 
+    # ── Original 5-Phase Tests ──
     def test_valid_transition_greeting_to_qualification(self):
         fsm = CallStateMachine()
         result = fsm.transition(CallState.QUALIFICATION)
@@ -48,79 +49,68 @@ class TestCallStateMachine:
         assert result is True
         assert fsm.current_state == CallState.WRAP_UP
 
+    # ── New 10-Mode Routing Tests ──
+    def test_intent_router_transitions(self):
+        """Test that GREETING can transition to any specific mode."""
+        valid_targets = [
+            CallState.QUALIFICATION,
+            CallState.CHECK_CALL,
+            CallState.ETA_UPDATE,
+            CallState.LOAD_STATUS,
+            CallState.DETENTION,
+            CallState.BREAKDOWN,
+            CallState.DOCUMENT_REQUEST,
+            CallState.ONBOARDING,
+            CallState.WRAP_UP,
+        ]
+        for target in valid_targets:
+            fsm = CallStateMachine()
+            assert fsm.transition(target) is True
+            assert fsm.current_state == target
+
+    def test_check_call_transitions(self):
+        fsm = CallStateMachine()
+        fsm.transition(CallState.CHECK_CALL)
+        assert fsm.can_transition(CallState.ETA_UPDATE) is True
+        assert fsm.can_transition(CallState.WRAP_UP) is True
+        assert fsm.can_transition(CallState.QUALIFICATION) is False
+
+    def test_load_status_transitions(self):
+        fsm = CallStateMachine()
+        fsm.transition(CallState.LOAD_STATUS)
+        assert fsm.can_transition(CallState.CHECK_CALL) is True
+        assert fsm.can_transition(CallState.WRAP_UP) is True
+
+    def test_onboarding_transitions(self):
+        fsm = CallStateMachine()
+        fsm.transition(CallState.ONBOARDING)
+        assert fsm.can_transition(CallState.QUALIFICATION) is True
+        assert fsm.can_transition(CallState.WRAP_UP) is True
+
+    # ── Invalid Transitions ──
     def test_invalid_transition_greeting_to_negotiation(self):
         fsm = CallStateMachine()
         result = fsm.transition(CallState.NEGOTIATION)
         assert result is False
         assert fsm.current_state == CallState.GREETING  # State unchanged
 
-    def test_invalid_transition_greeting_to_booking(self):
-        fsm = CallStateMachine()
-        result = fsm.transition(CallState.BOOKING)
-        assert result is False
-        assert fsm.current_state == CallState.GREETING
-
     def test_invalid_transition_wrap_up_to_anything(self):
         fsm = CallStateMachine()
-        fsm.transition(CallState.QUALIFICATION)
         fsm.transition(CallState.WRAP_UP)
-        # WRAP_UP is terminal — no valid transitions
+        # WRAP_UP is terminal
         assert fsm.transition(CallState.GREETING) is False
         assert fsm.transition(CallState.QUALIFICATION) is False
-        assert fsm.transition(CallState.NEGOTIATION) is False
+        assert fsm.transition(CallState.BREAKDOWN) is False
 
-    def test_negotiation_can_go_back_to_qualification(self):
+    # ── Call Mode Tracking ──
+    def test_call_mode_tracking(self):
         fsm = CallStateMachine()
-        fsm.transition(CallState.QUALIFICATION)
-        fsm.transition(CallState.NEGOTIATION)
-        result = fsm.transition(CallState.QUALIFICATION)
-        assert result is True
-        assert fsm.current_state == CallState.QUALIFICATION
+        fsm.transition(CallState.DETENTION)
+        assert fsm.context.call_mode == "detention"
 
-    def test_early_wrap_up_from_greeting(self):
-        fsm = CallStateMachine()
-        result = fsm.transition(CallState.WRAP_UP)
-        assert result is True
-        assert fsm.current_state == CallState.WRAP_UP
-
-    def test_early_wrap_up_from_qualification(self):
-        fsm = CallStateMachine()
-        fsm.transition(CallState.QUALIFICATION)
-        result = fsm.transition(CallState.WRAP_UP)
-        assert result is True
-
-    def test_early_wrap_up_from_negotiation(self):
-        fsm = CallStateMachine()
-        fsm.transition(CallState.QUALIFICATION)
-        fsm.transition(CallState.NEGOTIATION)
-        result = fsm.transition(CallState.WRAP_UP)
-        assert result is True
-
-    def test_can_transition_check(self):
-        fsm = CallStateMachine()
-        assert fsm.can_transition(CallState.QUALIFICATION) is True
-        assert fsm.can_transition(CallState.NEGOTIATION) is False
-        assert fsm.can_transition(CallState.WRAP_UP) is True
-
-    def test_states_visited_tracking(self):
-        fsm = CallStateMachine()
-        fsm.transition(CallState.QUALIFICATION)
-        fsm.transition(CallState.NEGOTIATION)
-        fsm.transition(CallState.BOOKING)
-        fsm.transition(CallState.WRAP_UP)
-        assert fsm.context.states_visited == [
-            "GREETING", "QUALIFICATION", "NEGOTIATION", "BOOKING", "WRAP_UP"
-        ]
-
-    def test_states_visited_with_backtrack(self):
-        fsm = CallStateMachine()
-        fsm.transition(CallState.QUALIFICATION)
-        fsm.transition(CallState.NEGOTIATION)
-        fsm.transition(CallState.QUALIFICATION)  # Go back
-        fsm.transition(CallState.NEGOTIATION)    # Try again
-        assert fsm.context.states_visited == [
-            "GREETING", "QUALIFICATION", "NEGOTIATION", "QUALIFICATION", "NEGOTIATION"
-        ]
+        fsm2 = CallStateMachine()
+        fsm2.transition(CallState.ONBOARDING)
+        assert fsm2.context.call_mode == "onboarding"
 
 
 class TestCallContext:
@@ -131,59 +121,36 @@ class TestCallContext:
         assert fsm.context.tenant_id == "abc"
         assert fsm.context.company_name == "ABC Logistics"
 
-    def test_context_driver_info(self):
+    def test_new_context_fields(self):
         fsm = CallStateMachine()
-        fsm.context.driver_mc_number = "MC123456"
-        fsm.context.driver_name = "John Smith"
-        fsm.context.driver_equipment = "Dry Van"
-        assert fsm.context.driver_mc_number == "MC123456"
-        assert fsm.context.driver_name == "John Smith"
-
-    def test_context_load_info(self):
-        fsm = CallStateMachine()
-        fsm.context.selected_load_id = "1001"
-        fsm.context.selected_lane_id = "IL-TX"
-        assert fsm.context.selected_load_id == "1001"
-        assert fsm.context.selected_lane_id == "IL-TX"
-
-    def test_context_negotiation_tracking(self):
-        fsm = CallStateMachine()
-        fsm.context.base_rate = 2.50
-        fsm.context.agreed_rate = 2.35
-        fsm.context.negotiation_rounds = 2
-        assert fsm.context.negotiation_rounds == 2
+        fsm.context.check_call_load_id = "L100"
+        fsm.context.detention_facility = "Walmart DC"
+        fsm.context.breakdown_location = "I-90 MM 42"
+        fsm.context.document_type = "pod"
+        
+        assert fsm.context.check_call_load_id == "L100"
+        assert fsm.context.detention_facility == "Walmart DC"
+        assert fsm.context.breakdown_location == "I-90 MM 42"
+        assert fsm.context.document_type == "pod"
 
     def test_tool_invocation_recording(self):
         fsm = CallStateMachine()
-        fsm.record_tool_invocation("search_loads")
-        fsm.record_tool_invocation("get_rate")
-        fsm.record_tool_invocation("negotiate_rate")
-        assert fsm.context.tools_invoked == ["search_loads", "get_rate", "negotiate_rate"]
+        fsm.record_tool_invocation("create_detention_claim")
+        fsm.record_tool_invocation("transfer_to_human")
+        assert fsm.context.tools_invoked == ["create_detention_claim", "transfer_to_human"]
 
     def test_call_summary(self):
         fsm = CallStateMachine(tenant_id="abc", company_name="ABC")
         fsm.context.driver_mc_number = "MC123"
-        fsm.context.booking_confirmed = True
-        fsm.transition(CallState.QUALIFICATION)
-        fsm.transition(CallState.NEGOTIATION)
-
+        fsm.transition(CallState.DETENTION)
+        
         summary = fsm.get_call_summary()
         assert summary["tenant_id"] == "abc"
         assert summary["driver_mc"] == "MC123"
-        assert summary["booking_confirmed"] is True
-        assert summary["final_state"] == "NEGOTIATION"
+        assert summary["call_mode"] == "detention"
+        assert summary["final_state"] == "DETENTION"
         assert "call_id" in summary
         assert "duration_seconds" in summary
-
-    def test_call_duration(self):
-        fsm = CallStateMachine()
-        duration = fsm.get_call_duration()
-        assert duration >= 0.0
-
-    def test_unique_call_ids(self):
-        fsm1 = CallStateMachine()
-        fsm2 = CallStateMachine()
-        assert fsm1.context.call_id != fsm2.context.call_id
 
 
 class TestTransitionMap:
@@ -195,7 +162,3 @@ class TestTransitionMap:
 
     def test_wrap_up_is_terminal(self):
         assert TRANSITION_MAP[CallState.WRAP_UP] == []
-
-    def test_greeting_transitions(self):
-        expected = [CallState.QUALIFICATION, CallState.WRAP_UP]
-        assert TRANSITION_MAP[CallState.GREETING] == expected

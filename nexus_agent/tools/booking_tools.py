@@ -63,10 +63,10 @@ class BookingTools:
                     status=response.status_code,
                     body=response.text,
                 )
-                return f"Booking could not be completed. The system returned an error. Please try again or transfer to a human dispatcher."
+                return f"Booking could not be completed right now. Try again in a moment."
         except httpx.TimeoutException:
             logger.error("Booking request timed out")
-            return "The booking system is taking too long to respond. Let me transfer you to a human dispatcher who can complete this."
+            return "The booking system is taking a moment. Hold on, let me try that one more time."
         except Exception as e:
             logger.exception("Booking error", error=str(e))
             return f"There was an issue confirming the booking. Please hold while I connect you with a dispatcher."

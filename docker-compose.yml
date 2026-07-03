@@ -1,6 +1,24 @@
 version: "3.8"
 
 services:
+  # ── PostgreSQL: Primary persistent data store ──
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: nexus_dispatch
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_dev_password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_dispatch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # ── Redis: Shared state across agent workers ──
   redis:
     image: redis:7-alpine
@@ -16,7 +34,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # ── TMS Backend: FastAPI mock database ──
+  # ── TMS Backend: FastAPI transportation management system ──
   tms-backend:
     build:
       context: ./tms_backend
@@ -24,14 +42,24 @@ services:
       - "8001:8000"
     volumes:
       - ./tms_backend:/app
+      - call_recordings:/app/recordings
     environment:
       - HOST=0.0.0.0
       - PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://nexus:${POSTGRES_PASSWORD:-nexus_dev_password}@postgres:5432/nexus_dispatch
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=${JWT_SECRET:-nexus_jwt_dev_secret_change_in_production}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
       timeout: 5s
       retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Nexus Agent Worker: AI Dispatch Engine ──
@@ -43,6 +71,7 @@ services:
       context: ./nexus_agent
     volumes:
       - ./nexus_agent:/app
+      - call_recordings:/app/recordings
     env_file:
       - .env
     environment:
@@ -67,5 +96,23 @@ services:
           memory: 256M
     restart: unless-stopped
 
+  # ── Premium Admin Dashboard (Next.js) ──
+  dashboard:
+    build:
+      context: ./dashboard
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+    depends_on:
+      - tms-backend
+    restart: unless-stopped
+
 volumes:
+  postgres_data:
   redis_data:
+  call_recordings:

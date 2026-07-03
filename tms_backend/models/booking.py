@@ -12,11 +12,12 @@ class Booking(BaseModel):
         default="confirmed",
         description="Booking status: 'confirmed', 'dispatched', 'in_transit', 'delivered', 'cancelled'",
     )
-    booked_at: str = Field(
-        default_factory=lambda: datetime.now().isoformat(),
-        description="ISO timestamp of when the booking was created",
-    )
+    booked_at: Optional[datetime] = Field(default=None, description="When the booking was created")
     notes: str = Field(default="", description="Optional notes from the AI dispatcher")
+    rate_con_sent: bool = Field(default=False, description="Whether rate confirmation was sent")
+
+    class Config:
+        from_attributes = True
 
 
 class BookingCreate(BaseModel):

@@ -37,6 +37,24 @@ def setup_hooks(session, state_machine: CallStateMachine | None = None):
 
     call_id = state_machine.context.call_id if state_machine else "unknown"
 
+    import asyncio
+    import json
+    import os
+    import redis.asyncio as aioredis
+    from livekit.agents.llm import ChatMessage
+
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+
+    tenant_id = state_machine.context.tenant_id if state_machine else "unknown"
+
+    async def _publish(message: dict):
+        try:
+            msg = {**message, "tenant_id": tenant_id, "call_id": call_id}
+            await redis_client.publish(f"nexus:live:{tenant_id}", json.dumps(msg))
+        except Exception as e:
+            logger.debug("Failed to publish to redis", error=str(e))
+
     # ── User Speech Events ──
 
     @session.on("user_speech_started")
@@ -47,6 +65,16 @@ def setup_hooks(session, state_machine: CallStateMachine | None = None):
             event="barge_in_possible",
             current_state=state_machine.current_state.value if state_machine else "unknown",
         )
+
+    @session.on("user_speech_committed")
+    def on_user_speech_committed(msg: ChatMessage):
+        # Publish user transcript
+        if msg.content:
+            asyncio.create_task(_publish({
+                "type": "transcript",
+                "speaker": "user",
+                "text": msg.content
+            }))
 
     @session.on("user_speech_finished")
     def on_user_speech_finished():
@@ -77,12 +105,33 @@ def setup_hooks(session, state_machine: CallStateMachine | None = None):
             # Reset for next turn
             timing["user_speech_end_time"] = None
 
+    @session.on("agent_speech_committed")
+    def on_agent_speech_committed(msg: ChatMessage):
+        # Publish agent transcript
+        if msg.content:
+            asyncio.create_task(_publish({
+                "type": "transcript",
+                "speaker": "agent",
+                "text": msg.content
+            }))
+
     @session.on("agent_speech_finished")
     def on_agent_speech_finished():
         logger.debug(
             "agent_speech_finished",
             call_id=call_id,
         )
+
+    # ── State Change Events ──
+    if state_machine:
+        original_transition = state_machine.transition_to
+        def hooked_transition(new_state):
+            original_transition(new_state)
+            asyncio.create_task(_publish({
+                "type": "state_changed",
+                "new_state": new_state.value
+            }))
+        state_machine.transition_to = hooked_transition
 
     # ── Function Call Events (Tool Execution) ──
 

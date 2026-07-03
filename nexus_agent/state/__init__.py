@@ -4,6 +4,13 @@ from state.agents import (
     QualificationAgent,
     NegotiationAgent,
     BookingAgent,
+    CheckCallAgent,
+    ETAUpdateAgent,
+    LoadStatusAgent,
+    DetentionAgent,
+    BreakdownAgent,
+    DocumentAgent,
+    OnboardingAgent,
     WrapUpAgent,
 )
 
@@ -15,5 +22,12 @@ __all__ = [
     "QualificationAgent",
     "NegotiationAgent",
     "BookingAgent",
+    "CheckCallAgent",
+    "ETAUpdateAgent",
+    "LoadStatusAgent",
+    "DetentionAgent",
+    "BreakdownAgent",
+    "DocumentAgent",
+    "OnboardingAgent",
     "WrapUpAgent",
 ]

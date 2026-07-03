@@ -19,7 +19,7 @@ from livekit.agents import AgentSession, AutoSubscribe, JobContext
 
 from config.settings import settings
 from config.tenant import TenantRegistry, TenantConfig
-from llm.groq_client import create_groq_llm
+from llm.google_client import create_google_llm
 from stt.deepgram_stt import create_stt
 from tts.deepgram_tts import create_tts
 from vad.silero_vad import create_vad
@@ -27,6 +27,10 @@ from state.machine import CallStateMachine
 from state.agents import GreetingAgent
 from tools.tms_tools import TMSTools
 from tools.booking_tools import BookingTools
+from tools.check_call_tools import CheckCallTools
+from tools.detention_tools import DetentionTools
+from tools.document_tools import DocumentTools
+from tools.onboarding_tools import OnboardingTools
 from pipeline.hooks import setup_hooks
 
 logger = structlog.get_logger()
@@ -130,7 +134,7 @@ async def run_agent(ctx: JobContext):
     tenant = await _resolve_tenant(ctx)
 
     # ── Step 2: Configure plugins for this tenant ──
-    llm = create_groq_llm(
+    llm = create_google_llm(
         model_name=tenant.llm_model,
         temperature=tenant.llm_temperature,
     )
@@ -145,6 +149,10 @@ async def run_agent(ctx: JobContext):
     )
     tms_tools = TMSTools(base_url=tenant.tms_api_url)
     booking_tools = BookingTools(base_url=tenant.tms_api_url)
+    check_call_tools = CheckCallTools(base_url=tenant.tms_api_url)
+    detention_tools = DetentionTools(base_url=tenant.tms_api_url)
+    document_tools = DocumentTools(base_url=tenant.tms_api_url)
+    onboarding_tools = OnboardingTools(base_url=tenant.tms_api_url)
 
     # ── Step 4: Create the starting agent ──
     greeting_agent = GreetingAgent(tenant_company=tenant.company_name)
@@ -155,17 +163,26 @@ async def run_agent(ctx: JobContext):
         stt=stt,
         tts=tts,
         vad=vad,
+        userdata={},
     )
 
     # Store shared context in session.userdata — accessible by all Agent subclasses
     session.userdata["state_machine"] = state_machine
     session.userdata["tms_tools"] = tms_tools
     session.userdata["booking_tools"] = booking_tools
+    session.userdata["check_call_tools"] = check_call_tools
+    session.userdata["detention_tools"] = detention_tools
+    session.userdata["document_tools"] = document_tools
+    session.userdata["onboarding_tools"] = onboarding_tools
     session.userdata["tenant_config"] = tenant.model_dump()
     session.userdata["room"] = ctx.room
 
     # ── Step 6: Wire observability hooks ──
     setup_hooks(session, state_machine)
+
+    from tools.human_intervention import HumanInterventionService
+    intervention_service = HumanInterventionService(session, state_machine.context.call_id)
+    intervention_service.start()
 
     # ── Step 7: Start the session ──
     await session.start(room=ctx.room, agent=greeting_agent)
@@ -176,3 +193,6 @@ async def run_agent(ctx: JobContext):
         tenant_id=tenant.tenant_id,
         company=tenant.company_name,
     )
+
+    # Clean up on exit
+    intervention_service.stop()

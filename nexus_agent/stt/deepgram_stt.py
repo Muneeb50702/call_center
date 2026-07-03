@@ -76,6 +76,23 @@ LOGISTICS_KEYWORDS = [
     "on duty:4",
     "off duty:4",
     "sleeper berth:3",
+    # New dispatch modes keywords
+    "where is my truck:5",
+    "check call:5",
+    "location:4",
+    "ETA:5",
+    "estimated time of arrival:5",
+    "breakdown:5",
+    "broken down:5",
+    "flat tire:4",
+    "roadside assistance:5",
+    "stuck at warehouse:4",
+    "stuck at shipper:4",
+    "stuck at receiver:4",
+    "new driver:4",
+    "register:4",
+    "onboard:4",
+    "insurance:4",
 ]
 
 
@@ -99,10 +116,22 @@ def create_stt(
                 kw = f"{kw}:4"
             all_keywords.append(kw)
 
+    # LiveKit Deepgram plugin 1.6+ requires keywords as list of tuples: (keyword, intensifier)
+    # Weights above 2.0 can cause aggressive hallucinations (e.g. "Hello" -> "Haul").
+    # We scale down the original 1-5 scale by dividing by 3.
+    parsed_keywords = []
+    for kw in all_keywords:
+        if ":" in kw:
+            word, weight = kw.rsplit(":", 1)
+            # Scale 5.0 -> 1.66, 4.0 -> 1.33, 3.0 -> 1.0
+            parsed_keywords.append((word, float(weight) / 3.0))
+        else:
+            parsed_keywords.append((kw, 1.3))
+
     return deepgram.STT(
-        model="nova-3",
+        model="nova-2-conversationalai",
         language="en-US",
         smart_format=True,
         filler_words=False,
-        keywords=all_keywords,
+        keywords=parsed_keywords,
     )
