@@ -13,7 +13,7 @@ class NexusSettings(BaseSettings):
     gemini_api_key: str = ""
 
     # LLM tiers
-    tier1_model: str = "llama-3.1-8b-instant"
+    tier1_model: str = "gemini-1.5-flash"
     tier2_model: str = "llama-3.3-70b-versatile"
     groq_temperature: float = 0.0
 

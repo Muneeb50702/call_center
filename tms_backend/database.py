@@ -116,9 +116,7 @@ class TenantDB(Base):
     negotiation_floor_pct: Mapped[float] = mapped_column(Float, default=0.90)
     max_negotiation_rounds: Mapped[int] = mapped_column(Integer, default=3)
     max_concurrent_calls: Mapped[int] = mapped_column(Integer, default=20)
-
-    # LLM
-    llm_model: Mapped[str] = mapped_column(String(64), default="llama-3.1-8b-instant")
+    llm_model: Mapped[str] = mapped_column(String(64), default="gemini-1.5-flash")
     llm_temperature: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Auth

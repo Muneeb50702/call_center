@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Search, Filter, Play, MoreVertical } from "lucide-react";
+import { useEffect, useState, useCallback } from "react";
+import { Search, Download, Play, MoreVertical } from "lucide-react";
 import { fetchApi } from "@/lib/api";
+import DataTable, { Column } from "@/components/ui/DataTable";
+import { SkeletonTable } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface CallHistory {
   id: string;
@@ -20,6 +23,7 @@ export default function CallHistoryPage() {
   const [calls, setCalls] = useState<CallHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const { addToast } = useToast();
 
   useEffect(() => {
     async function loadData() {
@@ -36,99 +40,152 @@ export default function CallHistoryPage() {
   }, []);
 
   const formatDuration = (seconds: number) => {
+    if (!seconds) return "—";
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}m ${s}s`;
   };
 
-  const filteredCalls = calls.filter(c => 
-    (c.driver_name || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+  const filteredCalls = calls.filter(c =>
+    (c.driver_name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
     (c.driver_mc || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.id.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const exportCSV = () => {
+    if (filteredCalls.length === 0) {
+      addToast({ type: "warning", title: "No data to export" });
+      return;
+    }
+    const headers = ["Call ID", "Driver", "MC Number", "Date", "Mode", "Duration (s)", "Outcome", "Transferred", "Agreed Rate"];
+    const rows = filteredCalls.map(c => [
+      c.id,
+      c.driver_name || "Unknown",
+      c.driver_mc || "",
+      c.started_at ? new Date(c.started_at).toISOString() : "",
+      c.call_mode || "",
+      c.duration_seconds?.toString() || "0",
+      c.outcome || "",
+      c.transferred_to_human ? "Yes" : "No",
+      c.agreed_rate?.toFixed(2) || "0",
+    ]);
+    const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${v}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nexus_call_history_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addToast({ type: "success", title: "CSV exported", message: `${filteredCalls.length} calls exported successfully.` });
+  };
+
+  const columns: Column<CallHistory>[] = [
+    {
+      key: "id",
+      label: "Call ID",
+      sortable: true,
+      width: "120px",
+      render: (val) => (
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+          {val?.substring(0, 8)}...
+        </span>
+      ),
+    },
+    {
+      key: "driver_name",
+      label: "Driver",
+      sortable: true,
+      render: (val, row) => (
+        <div>
+          <span style={{ fontWeight: 500 }}>{val || "Unknown"}</span>
+          {row.driver_mc && <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{row.driver_mc}</div>}
+        </div>
+      ),
+    },
+    {
+      key: "started_at",
+      label: "Date & Time",
+      sortable: true,
+      render: (val) => (
+        <span style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          {val ? new Date(val).toLocaleString() : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "call_mode",
+      label: "Mode",
+      sortable: true,
+      render: (val) => <span className="badge badge-neutral">{(val || "unknown").replace(/_/g, " ")}</span>,
+    },
+    {
+      key: "duration_seconds",
+      label: "Duration",
+      sortable: true,
+      align: "right",
+      render: (val) => (
+        <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatDuration(val)}</span>
+      ),
+    },
+    {
+      key: "outcome",
+      label: "Outcome",
+      sortable: true,
+      render: (val, row) => {
+        const cls = val === "booked" || val === "resolved" ? "badge-success" : row.transferred_to_human ? "badge-warning" : "badge-neutral";
+        const text = row.transferred_to_human ? "Transferred" : (val || "unknown").replace(/_/g, " ");
+        return <span className={`badge ${cls}`}>{text}</span>;
+      },
+    },
+    {
+      key: "actions",
+      label: "",
+      width: "80px",
+      render: () => (
+        <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
+          <button className="btn-secondary" style={{ padding: "4px 8px" }} title="Play Recording"><Play size={14} /></button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-6)" }}>
-      
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <h2 style={{ fontSize: "1.5rem", fontWeight: 600, marginBottom: "var(--spacing-1)" }}>Call History</h2>
           <p style={{ color: "var(--text-secondary)" }}>Review past calls, listen to recordings, and analyze transcripts.</p>
         </div>
-        <button className="btn-primary">Export CSV</button>
+        <button className="btn-primary" onClick={exportCSV}><Download size={18} /> Export CSV</button>
       </div>
 
-      <div className="glass-panel">
-        
-        {/* Toolbar */}
-        <div style={{ padding: "var(--spacing-4)", borderBottom: "1px solid var(--border)", display: "flex", gap: "var(--spacing-4)" }}>
-          <div style={{ position: "relative", flex: 1 }}>
-            <Search size={18} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input 
-              type="text" 
-              className="input-field" 
-              placeholder="Search by driver, MC, or call ID..." 
-              style={{ paddingLeft: "38px" }}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-          <button className="btn-secondary"><Filter size={18} /> Filters</button>
+      {/* Search */}
+      <div className="glass-panel" style={{ padding: "var(--spacing-4)", display: "flex", gap: "var(--spacing-4)" }}>
+        <div style={{ position: "relative", flex: 1 }}>
+          <Search size={18} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+          <input
+            type="text"
+            className="input-field"
+            placeholder="Search by driver, MC, or call ID..."
+            style={{ paddingLeft: "38px" }}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
         </div>
-        
-        {/* Table */}
-        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-          <thead>
-            <tr style={{ background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border)" }}>
-              <th style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontWeight: 500, fontSize: "0.875rem" }}>Call ID</th>
-              <th style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontWeight: 500, fontSize: "0.875rem" }}>Driver</th>
-              <th style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontWeight: 500, fontSize: "0.875rem" }}>Date & Time</th>
-              <th style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontWeight: 500, fontSize: "0.875rem" }}>Mode</th>
-              <th style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontWeight: 500, fontSize: "0.875rem" }}>Duration</th>
-              <th style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontWeight: 500, fontSize: "0.875rem" }}>Outcome</th>
-              <th style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontWeight: 500, fontSize: "0.875rem" }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "var(--text-secondary)" }}>Loading history...</td>
-              </tr>
-            ) : filteredCalls.length === 0 ? (
-              <tr>
-                <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "var(--text-secondary)" }}>No calls found.</td>
-              </tr>
-            ) : (
-              filteredCalls.map((call) => (
-                <tr key={call.id} style={{ borderBottom: "1px solid var(--border)", transition: "background var(--transition-fast)" }} className="hover:bg-bg-tertiary">
-                  <td style={{ padding: "var(--spacing-3) var(--spacing-4)", fontFamily: "var(--font-mono)", fontSize: "0.875rem" }}>{call.id}</td>
-                  <td style={{ padding: "var(--spacing-3) var(--spacing-4)", fontWeight: 500 }}>
-                    {call.driver_name || "Unknown"}
-                    {call.driver_mc && <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{call.driver_mc}</div>}
-                  </td>
-                  <td style={{ padding: "var(--spacing-3) var(--spacing-4)", color: "var(--text-secondary)", fontSize: "0.875rem" }}>
-                    {new Date(call.started_at).toLocaleString()}
-                  </td>
-                  <td style={{ padding: "var(--spacing-3) var(--spacing-4)" }}><span className="badge badge-neutral">{call.call_mode}</span></td>
-                  <td style={{ padding: "var(--spacing-3) var(--spacing-4)", fontVariantNumeric: "tabular-nums" }}>{formatDuration(call.duration_seconds)}</td>
-                  <td style={{ padding: "var(--spacing-3) var(--spacing-4)" }}>
-                    <span className={`badge ${call.outcome === 'booked' || call.outcome === 'resolved' ? 'badge-success' : call.transferred_to_human ? 'badge-warning' : 'badge-neutral'}`}>
-                      {call.transferred_to_human ? 'Transferred' : call.outcome.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td style={{ padding: "var(--spacing-3) var(--spacing-4)" }}>
-                    <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
-                      <button className="btn-secondary" style={{ padding: "4px 8px" }} title="Play Recording"><Play size={14} /></button>
-                      <button className="btn-secondary" style={{ padding: "4px 8px" }} title="More"><MoreVertical size={14} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-        
       </div>
+
+      {loading ? (
+        <SkeletonTable rows={8} columns={7} />
+      ) : (
+        <DataTable
+          data={filteredCalls}
+          columns={columns}
+          pageSize={10}
+          emptyMessage="No calls found. Calls will appear here after the AI handles incoming dispatch calls."
+        />
+      )}
     </div>
   );
 }

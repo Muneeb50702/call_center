@@ -107,6 +107,7 @@ export default function SettingsPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-2)" }}>
             <label style={{ fontSize: "0.875rem", color: "var(--text-secondary)", fontWeight: 500 }}>LLM Engine</label>
             <select className="input-field" value={tenant?.llm_model || ""} onChange={(e) => handleChange("llm_model", e.target.value)}>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash (Testing Tier)</option>
               <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fastest)</option>
               <option value="llama-3.3-70b-versatile">Llama 3.3 70B (High Accuracy)</option>
             </select>

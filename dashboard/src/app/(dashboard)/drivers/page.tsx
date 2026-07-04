@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Search, Plus, Mail, Phone, FileText, Pencil } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { SkeletonCardGrid } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface Driver {
   id: string;
@@ -30,6 +32,7 @@ export default function DriversPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [formData, setFormData] = useState(emptyDriver);
   const [saving, setSaving] = useState(false);
+  const { addToast } = useToast();
 
   const loadData = async () => {
     try {
@@ -67,8 +70,9 @@ export default function DriversPage() {
       setModalOpen(false);
       setLoading(true);
       loadData();
+      addToast({ type: "success", title: "Driver registered", message: `${formData.name} has been added.` });
     } catch (err: any) {
-      alert(err.message || "Failed to create driver");
+      addToast({ type: "error", title: "Registration failed", message: err.message || "Failed to create driver" });
     } finally {
       setSaving(false);
     }
@@ -101,14 +105,14 @@ export default function DriversPage() {
       </div>
 
       {loading ? (
-        <div style={{ padding: "2rem", textAlign: "center", color: "var(--text-secondary)" }}>Loading drivers...</div>
+        <SkeletonCardGrid count={6} />
       ) : filteredDrivers.length === 0 ? (
         <div className="glass-panel" style={{ padding: "3rem", textAlign: "center" }}>
           <p style={{ color: "var(--text-secondary)", marginBottom: "var(--spacing-4)" }}>No drivers found. Register your first driver.</p>
           <button className="btn-primary" onClick={openCreate}><Plus size={18} /> Add Driver</button>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "var(--spacing-4)" }}>
+        <div className="stagger-in" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "var(--spacing-4)" }}>
           {filteredDrivers.map((driver) => (
             <div key={driver.id} className="glass-panel animate-fade-in" style={{ padding: "var(--spacing-5)", display: "flex", flexDirection: "column", gap: "var(--spacing-4)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>

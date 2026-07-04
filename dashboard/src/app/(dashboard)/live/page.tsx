@@ -143,7 +143,7 @@ export default function LiveMonitorPage() {
       
       // If no call is selected, select the first active one
       if (!selectedCallId && next.size > 0) {
-        setSelectedCallId(next.keys().next().value);
+        setSelectedCallId(next.keys().next().value || null);
       }
 
       return next;

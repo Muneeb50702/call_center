@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { Search, Plus, MapPin, Truck as TruckIcon, Pencil, Trash2 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { SkeletonCardGrid } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface Load {
   id: string;
@@ -37,6 +39,7 @@ export default function LoadsPage() {
   const [editingLoad, setEditingLoad] = useState<any>(null);
   const [formData, setFormData] = useState(emptyLoad);
   const [saving, setSaving] = useState(false);
+  const { addToast } = useToast();
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -94,8 +97,9 @@ export default function LoadsPage() {
       }
       setModalOpen(false);
       loadData();
+      addToast({ type: "success", title: editingLoad ? "Load updated" : "Load created", message: editingLoad ? `Status changed to ${formData.status}.` : `Load ${formData.id} added.` });
     } catch (err: any) {
-      alert(err.message || "Failed to save load");
+      addToast({ type: "error", title: "Failed to save", message: err.message || "Failed to save load" });
     } finally {
       setSaving(false);
     }
@@ -145,14 +149,14 @@ export default function LoadsPage() {
       </div>
       
       {loading ? (
-        <div style={{ padding: "2rem", textAlign: "center", color: "var(--text-secondary)" }}>Loading...</div>
+        <SkeletonCardGrid count={6} />
       ) : loads.length === 0 ? (
         <div className="glass-panel" style={{ padding: "3rem", textAlign: "center" }}>
           <p style={{ color: "var(--text-secondary)", marginBottom: "var(--spacing-4)" }}>No loads found. Create your first load to get started.</p>
           <button className="btn-primary" onClick={openCreate}><Plus size={18} /> Add Load</button>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))", gap: "var(--spacing-4)" }}>
+        <div className="stagger-in" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))", gap: "var(--spacing-4)" }}>
           {loads.map((load) => (
             <div key={load.id} className="glass-panel animate-fade-in" style={{ padding: "var(--spacing-5)", display: "flex", flexDirection: "column", gap: "var(--spacing-4)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

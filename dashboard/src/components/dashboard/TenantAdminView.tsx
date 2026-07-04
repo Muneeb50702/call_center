@@ -1,9 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Phone, CheckCircle, Clock, ArrowUpRight, ArrowDownRight, PhoneIncoming, AlertTriangle } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { Phone, CheckCircle, Clock, AlertTriangle, PhoneIncoming, TrendingUp } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { fetchApi } from "@/lib/api";
+import { SkeletonCardGrid } from "@/components/ui/Skeleton";
+
+/** Animated counter that counts up from 0 to target */
+function AnimatedNumber({ value, duration = 1200, prefix = "", suffix = "" }: { value: number; duration?: number; prefix?: string; suffix?: string }) {
+  const [display, setDisplay] = useState(0);
+  const ref = useRef<number | null>(null);
+  const startTime = useRef<number>(0);
+
+  useEffect(() => {
+    if (value === 0) { setDisplay(0); return; }
+    startTime.current = performance.now();
+    const animate = (now: number) => {
+      const elapsed = now - startTime.current;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+      setDisplay(Math.round(eased * value));
+      if (progress < 1) ref.current = requestAnimationFrame(animate);
+    };
+    ref.current = requestAnimationFrame(animate);
+    return () => { if (ref.current) cancelAnimationFrame(ref.current); };
+  }, [value, duration]);
+
+  return <>{prefix}{display}{suffix}</>;
+}
 
 export default function TenantAdminView() {
   const [kpiData, setKpiData] = useState<any>(null);
@@ -17,9 +41,8 @@ export default function TenantAdminView() {
         const [kpis, daily, calls] = await Promise.all([
           fetchApi("/analytics/kpis"),
           fetchApi("/analytics/daily"),
-          fetchApi("/calls/history?limit=3") // Simulate live calls for now
+          fetchApi("/calls/history?limit=3")
         ]);
-
         setKpiData(kpis);
         setChartData(daily.map((d: any) => ({ time: d.date, calls: d.calls, bookings: d.bookings })));
         setLiveCalls(calls);
@@ -30,14 +53,20 @@ export default function TenantAdminView() {
       }
     }
     loadData();
-    
-    // Auto refresh every 30 seconds
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   }, []);
 
   if (loading) {
-    return <div style={{ padding: "2rem", color: "var(--text-secondary)" }}>Loading dashboard data...</div>;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-6)" }}>
+        <SkeletonCardGrid count={4} />
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "var(--spacing-6)" }}>
+          <div className="glass-panel" style={{ height: "380px" }} />
+          <div className="glass-panel" style={{ height: "380px" }} />
+        </div>
+      </div>
+    );
   }
 
   const formatDuration = (seconds: number) => {
@@ -47,41 +76,102 @@ export default function TenantAdminView() {
   };
 
   const kpis = [
-    { title: "Total Calls (Today)", value: kpiData?.calls_today || "0", change: "", positive: true, icon: Phone },
-    { title: "Bookings (All Time)", value: kpiData?.total_bookings || "0", change: "", positive: true, icon: CheckCircle },
-    { title: "Avg Duration", value: formatDuration(kpiData?.avg_call_duration_s || 0), change: "", positive: true, icon: Clock },
-    { title: "Human Transfers", value: `${kpiData?.transfer_rate_pct || 0}%`, change: "", positive: false, icon: AlertTriangle },
+    {
+      title: "Total Calls (Today)",
+      value: kpiData?.calls_today || 0,
+      suffix: "",
+      gradient: "linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(139, 92, 246, 0.08))",
+      iconBg: "rgba(59, 130, 246, 0.15)",
+      iconColor: "var(--accent-primary)",
+      icon: Phone,
+    },
+    {
+      title: "Bookings (All Time)",
+      value: kpiData?.total_bookings || 0,
+      suffix: "",
+      gradient: "linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.05))",
+      iconBg: "rgba(16, 185, 129, 0.15)",
+      iconColor: "var(--success)",
+      icon: CheckCircle,
+    },
+    {
+      title: "Avg Duration",
+      value: kpiData?.avg_call_duration_s || 0,
+      isTime: true,
+      gradient: "linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(245, 158, 11, 0.04))",
+      iconBg: "rgba(245, 158, 11, 0.15)",
+      iconColor: "var(--warning)",
+      icon: Clock,
+    },
+    {
+      title: "Human Transfers",
+      value: kpiData?.transfer_rate_pct || 0,
+      suffix: "%",
+      gradient: "linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04))",
+      iconBg: "rgba(239, 68, 68, 0.15)",
+      iconColor: "var(--danger)",
+      icon: AlertTriangle,
+    },
   ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-6)" }}>
-      
+
       {/* ── KPI Cards ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "var(--spacing-4)" }}>
+      <div className="stagger-in" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "var(--spacing-4)" }}>
         {kpis.map((kpi, i) => {
           const Icon = kpi.icon;
           return (
-            <div key={i} className="glass-panel" style={{ padding: "var(--spacing-4)", display: "flex", flexDirection: "column", gap: "var(--spacing-3)" }}>
+            <div
+              key={i}
+              className="glass-panel"
+              style={{
+                padding: "var(--spacing-5)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--spacing-3)",
+                background: kpi.gradient,
+                transition: "transform 0.2s ease, box-shadow 0.2s ease",
+                cursor: "default",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "var(--shadow-lg)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "var(--shadow-md)"; }}
+            >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ color: "var(--text-secondary)", fontSize: "0.875rem", fontWeight: 500 }}>{kpi.title}</span>
-                <div style={{ padding: "8px", background: "var(--bg-tertiary)", borderRadius: "var(--radius-md)", color: "var(--accent-primary)" }}>
+                <div style={{
+                  padding: "10px",
+                  background: kpi.iconBg,
+                  borderRadius: "var(--radius-lg)",
+                  color: kpi.iconColor,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}>
                   <Icon size={20} />
                 </div>
               </div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: "var(--spacing-3)" }}>
-                <h2 style={{ fontSize: "2rem", fontWeight: 700, lineHeight: 1 }}>{kpi.value}</h2>
-              </div>
+              <h2 style={{ fontSize: "2.25rem", fontWeight: 700, lineHeight: 1, letterSpacing: "-0.02em" }}>
+                {kpi.isTime ? (
+                  formatDuration(kpi.value)
+                ) : (
+                  <AnimatedNumber value={kpi.value} suffix={kpi.suffix} />
+                )}
+              </h2>
             </div>
           );
         })}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "var(--spacing-6)", alignItems: "start" }}>
-        
+
         {/* ── Main Chart ── */}
-        <div className="glass-panel" style={{ padding: "var(--spacing-6)" }}>
+        <div className="glass-panel animate-fade-in" style={{ padding: "var(--spacing-6)" }}>
           <div style={{ marginBottom: "var(--spacing-6)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ fontSize: "1.125rem", fontWeight: 600 }}>Fleet Call Volume vs Bookings</h3>
+            <h3 style={{ fontSize: "1.125rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+              <TrendingUp size={18} color="var(--accent-primary)" />
+              Fleet Call Volume vs Bookings
+            </h3>
             <span className="badge badge-neutral">Daily</span>
           </div>
           <div style={{ height: "300px", width: "100%" }}>
@@ -100,7 +190,7 @@ export default function TenantAdminView() {
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-light)" vertical={false} />
                 <XAxis dataKey="time" stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} />
                 <YAxis stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} />
-                <Tooltip 
+                <Tooltip
                   contentStyle={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }}
                   itemStyle={{ color: 'var(--text-primary)' }}
                 />
@@ -111,22 +201,30 @@ export default function TenantAdminView() {
           </div>
         </div>
 
-        {/* ── Live Calls Feed ── */}
-        <div className="glass-panel" style={{ padding: "var(--spacing-6)" }}>
+        {/* ── Recent Calls Feed ── */}
+        <div className="glass-panel animate-fade-in" style={{ padding: "var(--spacing-6)" }}>
           <div style={{ marginBottom: "var(--spacing-6)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ fontSize: "1.125rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
               <PhoneIncoming size={18} color="var(--accent-primary)" />
               Recent Calls
             </h3>
             <span className="badge badge-success" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--success)" }} />
+              <div className="live-pulse" style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--success)" }} />
               {liveCalls.length} Found
             </span>
           </div>
-          
+
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-3)" }}>
             {liveCalls.map((call) => (
-              <div key={call.id} style={{ padding: "var(--spacing-3)", borderRadius: "var(--radius-md)", background: "var(--bg-tertiary)", border: "1px solid var(--border-light)", display: "flex", flexDirection: "column", gap: "var(--spacing-2)" }}>
+              <div key={call.id} style={{
+                padding: "var(--spacing-3)", borderRadius: "var(--radius-md)",
+                background: "var(--bg-tertiary)", border: "1px solid var(--border-light)",
+                display: "flex", flexDirection: "column", gap: "var(--spacing-2)",
+                transition: "border-color var(--transition-fast)",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent-primary)")}
+              onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border-light)")}
+              >
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span style={{ fontWeight: 600 }}>{call.driver_name || "Unknown Driver"}</span>
                   <span style={{ color: "var(--accent-primary)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
@@ -140,10 +238,10 @@ export default function TenantAdminView() {
               </div>
             ))}
             {liveCalls.length === 0 && (
-              <div style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>No recent calls</div>
+              <div style={{ color: "var(--text-muted)", fontSize: "0.875rem", padding: "var(--spacing-4)", textAlign: "center" }}>No recent calls</div>
             )}
           </div>
-          
+
           <button className="btn-secondary" style={{ width: "100%", marginTop: "var(--spacing-4)" }} onClick={() => window.location.href='/history'}>
             View All Calls
           </button>

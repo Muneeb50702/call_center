@@ -159,3 +159,53 @@ async def update_call(
 
     await db.flush()
     return CallResponse.model_validate(call, from_attributes=True)
+
+
+from fastapi.responses import StreamingResponse
+import io
+import csv
+
+@router.get("/export/csv", response_class=StreamingResponse)
+async def export_calls_csv(
+    days: int = Query(30, ge=1, le=365),
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export call history as a CSV file."""
+    since = datetime.utcnow() - timedelta(days=days)
+    query = select(CallDB).where(
+        CallDB.tenant_id == user.tenant_id,
+        CallDB.started_at >= since,
+    ).order_by(desc(CallDB.started_at))
+    
+    result = await db.execute(query)
+    calls = result.scalars().all()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Headers
+    writer.writerow([
+        "Call ID", "Driver Name", "Driver MC", "Started At", "Duration (s)",
+        "Mode", "Outcome", "Transferred to Human", "Agreed Rate"
+    ])
+    
+    for c in calls:
+        writer.writerow([
+            c.id,
+            c.driver_name or "",
+            c.driver_mc or "",
+            c.started_at.isoformat() if c.started_at else "",
+            c.duration_seconds or 0,
+            c.call_mode or "",
+            c.outcome or "",
+            "Yes" if c.transferred_to_human else "No",
+            c.agreed_rate or 0
+        ])
+        
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=calls_export_{datetime.utcnow().strftime('%Y%m%d')}.csv"}
+    )

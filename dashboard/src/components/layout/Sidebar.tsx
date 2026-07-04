@@ -13,10 +13,17 @@ import {
   DollarSign,
   Settings,
   Shield,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-export default function Sidebar() {
+interface SidebarProps {
+  collapsed: boolean;
+  onToggle: () => void;
+}
+
+export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const [role, setRole] = useState<string | null>(null);
 
@@ -41,11 +48,18 @@ export default function Sidebar() {
   const visibleNavItems = navItems.filter(item => !item.requireRole || item.requireRole === role);
 
   return (
-    <aside className={styles.sidebar}>
+    <aside className={`${styles.sidebar} ${collapsed ? styles.sidebarCollapsed : ""}`}>
       <div className={styles.logoContainer}>
-        <span className={`${styles.logoText} gradient-text`}>Nexus Dispatch</span>
+        {!collapsed && <span className={`${styles.logoText} gradient-text`}>Nexus Dispatch</span>}
+        <button
+          onClick={onToggle}
+          className={styles.collapseBtn}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>
       </div>
-      
+
       <nav className={styles.navMenu}>
         {visibleNavItems.map((item) => {
           const isActive = pathname === item.href;
@@ -55,13 +69,23 @@ export default function Sidebar() {
               key={item.name}
               href={item.href}
               className={`${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
+              title={collapsed ? item.name : undefined}
             >
               <Icon className={styles.navIcon} />
-              {item.name}
+              {!collapsed && <span>{item.name}</span>}
             </Link>
           );
         })}
       </nav>
+
+      {/* Bottom section — version */}
+      {!collapsed && (
+        <div className={styles.sidebarFooter}>
+          <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", letterSpacing: "0.05em" }}>
+            NEXUS v1.0.0
+          </span>
+        </div>
+      )}
     </aside>
   );
 }

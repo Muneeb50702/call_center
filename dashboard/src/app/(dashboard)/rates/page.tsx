@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Search, Plus } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { SkeletonTable } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface Rate {
   lane_id: string;
@@ -22,6 +24,7 @@ export default function RatesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [formData, setFormData] = useState(emptyRate);
   const [saving, setSaving] = useState(false);
+  const { addToast } = useToast();
 
   const loadData = async () => {
     try {
@@ -59,8 +62,9 @@ export default function RatesPage() {
       setModalOpen(false);
       setLoading(true);
       loadData();
+      addToast({ type: "success", title: "Rate created", message: `Lane ${formData.lane_id} rate saved.` });
     } catch (err: any) {
-      alert(err.message || "Failed to create rate");
+      addToast({ type: "error", title: "Failed to create rate", message: err.message || "Something went wrong" });
     } finally {
       setSaving(false);
     }

@@ -35,7 +35,7 @@ class TenantResponse(BaseModel):
     negotiation_floor_pct: float = 0.90
     max_negotiation_rounds: int = 3
     max_concurrent_calls: int = 20
-    llm_model: str = "llama-3.1-8b-instant"
+    llm_model: str = "gemini-1.5-flash"
     llm_temperature: float = 0.0
     is_active: bool = True
 
@@ -54,7 +54,7 @@ class TenantCreate(BaseModel):
     negotiation_floor_pct: float = 0.90
     max_negotiation_rounds: int = 3
     max_concurrent_calls: int = 20
-    llm_model: str = "llama-3.1-8b-instant"
+    llm_model: str = "gemini-1.5-flash"
     llm_temperature: float = 0.0
 
 

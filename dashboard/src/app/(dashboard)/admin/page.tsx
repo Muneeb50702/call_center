@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { Building, Plus, Shield, MoreVertical, Copy, Check } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { SkeletonTable, SkeletonCardGrid } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 const emptyTenant = {
   id: "", company_name: "", greeting_script: "", sip_numbers: [],
   human_transfer_number: "", voice_model: "aura-orion-en",
   negotiation_floor_pct: 0.90, max_negotiation_rounds: 3,
-  max_concurrent_calls: 20, llm_model: "llama-3.1-8b-instant",
+  max_concurrent_calls: 20, llm_model: "gemini-1.5-flash",
 };
 
 export default function SuperAdminPage() {
@@ -18,6 +20,7 @@ export default function SuperAdminPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [formData, setFormData] = useState(emptyTenant);
   const [saving, setSaving] = useState(false);
+  const { addToast } = useToast();
 
   // Onboard result state (to show API key)
   const [onboardResult, setOnboardResult] = useState<any>(null);
@@ -52,8 +55,9 @@ export default function SuperAdminPage() {
       setOnboardResult(result);
       setLoading(true);
       loadData();
+      addToast({ type: "success", title: "Tenant onboarded!", message: `${formData.company_name} is now active.` });
     } catch (err: any) {
-      alert(err.message || "Failed to onboard tenant");
+      addToast({ type: "error", title: "Onboarding failed", message: err.message || "Failed to onboard tenant" });
     } finally {
       setSaving(false);
     }
@@ -198,6 +202,7 @@ export default function SuperAdminPage() {
               <div style={fieldStyle}>
                 <label style={labelStyle}>LLM Model</label>
                 <select className="input-field" value={formData.llm_model} onChange={(e) => handleField("llm_model", e.target.value)}>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (Testing Tier)</option>
                   <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fastest)</option>
                   <option value="llama-3.3-70b-versatile">Llama 3.3 70B (High Accuracy)</option>
                 </select>

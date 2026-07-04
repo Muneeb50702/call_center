@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Activity, Users, DollarSign, Server, ArrowUpRight, ArrowDownRight, UserPlus, ShieldAlert, CheckCircle } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { fetchApi } from "@/lib/api";
+import { SkeletonCardGrid } from "@/components/ui/Skeleton";
 
 const mockData = [
   { month: 'Jan', revenue: 12500, usage: 8400 },
@@ -40,7 +41,15 @@ export default function SuperAdminView() {
   }, []);
 
   if (loading) {
-    return <div style={{ padding: "2rem", color: "var(--text-secondary)" }}>Loading admin dashboard...</div>;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-6)" }}>
+        <SkeletonCardGrid count={4} />
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "var(--spacing-6)" }}>
+          <div className="glass-panel" style={{ height: "380px" }} />
+          <div className="glass-panel" style={{ height: "380px" }} />
+        </div>
+      </div>
+    );
   }
 
   const kpis = [
@@ -54,7 +63,7 @@ export default function SuperAdminView() {
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-6)" }}>
       
       {/* ── Global KPIs ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "var(--spacing-4)" }}>
+      <div className="stagger-in" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "var(--spacing-4)" }}>
         {kpis.map((kpi, i) => {
           const Icon = kpi.icon;
           return (
@@ -80,7 +89,7 @@ export default function SuperAdminView() {
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "var(--spacing-6)", alignItems: "start" }}>
         
         {/* ── Revenue Chart ── */}
-        <div className="glass-panel" style={{ padding: "var(--spacing-6)" }}>
+        <div className="glass-panel animate-fade-in" style={{ padding: "var(--spacing-6)" }}>
           <div style={{ marginBottom: "var(--spacing-6)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ fontSize: "1.125rem", fontWeight: 600 }}>Platform Revenue & Usage (YTD)</h3>
             <span className="badge badge-neutral">Last 6 Months</span>
@@ -113,7 +122,7 @@ export default function SuperAdminView() {
         </div>
 
         {/* ── System Activity ── */}
-        <div className="glass-panel" style={{ padding: "var(--spacing-6)" }}>
+        <div className="glass-panel animate-fade-in" style={{ padding: "var(--spacing-6)" }}>
           <div style={{ marginBottom: "var(--spacing-6)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ fontSize: "1.125rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
               <Activity size={18} color="var(--accent-secondary)" />
