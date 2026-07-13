@@ -7,15 +7,19 @@ Tools for sending rate confirmations, PODs, and BOLs via email.
 import structlog
 import httpx
 
+from tools.service_http import service_headers
+
 logger = structlog.get_logger()
 
 
 class DocumentTools:
     """Tools for document management and delivery."""
 
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", tenant_id: str = ""):
         self.base_url = base_url
-        self.client = httpx.AsyncClient(base_url=base_url, timeout=10.0)
+        self.client = httpx.AsyncClient(
+            base_url=base_url, timeout=10.0, headers=service_headers(tenant_id)
+        )
 
     async def send_rate_confirmation(self, booking_id: str, email: str) -> str:
         """Send a rate confirmation document to the specified email."""

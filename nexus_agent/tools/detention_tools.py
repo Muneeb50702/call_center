@@ -8,15 +8,19 @@ import structlog
 import httpx
 from datetime import datetime
 
+from tools.service_http import service_headers
+
 logger = structlog.get_logger()
 
 
 class DetentionTools:
     """Tools for detention claim operations."""
 
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", tenant_id: str = ""):
         self.base_url = base_url
-        self.client = httpx.AsyncClient(base_url=base_url, timeout=5.0)
+        self.client = httpx.AsyncClient(
+            base_url=base_url, timeout=5.0, headers=service_headers(tenant_id)
+        )
 
     async def create_detention_claim(
         self,

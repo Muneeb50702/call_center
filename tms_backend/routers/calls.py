@@ -36,7 +36,12 @@ class CallResponse(BaseModel):
     transferred_to_human: bool = False
     transfer_reason: str = ""
     recording_path: str = ""
+    direction: str = "inbound"
+    transcript: list = []
+    sentiment: str = "neutral"
+    exception_peak: float = 0.0
     avg_latency_ms: Optional[int] = None
+    p95_latency_ms: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -47,10 +52,11 @@ class CallCreate(BaseModel):
     id: str
     caller_number: str = ""
     call_mode: str = "load_booking"
+    direction: str = "inbound"
 
 
 class CallUpdate(BaseModel):
-    """Used by the agent to update call state when it ends."""
+    """Used by the agent to update call state during/at end of the call."""
     driver_name: Optional[str] = None
     driver_mc: Optional[str] = None
     call_mode: Optional[str] = None
@@ -65,6 +71,10 @@ class CallUpdate(BaseModel):
     transferred_to_human: Optional[bool] = None
     transfer_reason: Optional[str] = None
     recording_path: Optional[str] = None
+    direction: Optional[str] = None
+    transcript: Optional[list] = None
+    sentiment: Optional[str] = None
+    exception_peak: Optional[float] = None
     avg_latency_ms: Optional[int] = None
     p95_latency_ms: Optional[int] = None
 
@@ -128,6 +138,7 @@ async def register_call(
         tenant_id=user.tenant_id,
         caller_number=req.caller_number,
         call_mode=req.call_mode,
+        direction=req.direction,
         started_at=datetime.utcnow(),
     )
     db.add(call)

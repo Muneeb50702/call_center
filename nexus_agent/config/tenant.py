@@ -50,8 +50,8 @@ class TenantConfig(BaseModel):
 
     # Voice & STT Customization
     voice_model: str = Field(
-        default="aura-orion-en",
-        description="Deepgram TTS voice model (e.g., 'aura-orion-en', 'aura-asteria-en')",
+        default="aura-2-apollo-en",
+        description="Deepgram TTS voice model (e.g., 'aura-2-apollo-en', 'aura-2-hera-en')",
     )
     custom_keywords: list[str] = Field(
         default_factory=list,
@@ -74,8 +74,8 @@ class TenantConfig(BaseModel):
 
     # LLM Configuration
     llm_model: str = Field(
-        default="gemini-1.5-flash",
-        description="Groq model to use for this tenant",
+        default="gemini-2.5-flash",
+        description="Primary LLM model for this tenant (Gemini via livekit-plugins-google)",
     )
     llm_temperature: float = Field(
         default=0.0,

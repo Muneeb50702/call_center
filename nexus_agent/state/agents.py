@@ -24,8 +24,9 @@ Agents:
 12. WrapUpAgent (Call Termination)
 """
 
+import re
 import structlog
-from livekit.agents import Agent, function_tool, RunContext
+from livekit.agents import Agent, function_tool, RunContext, stt
 
 from llm.prompts import (
     get_greeting_prompt,
@@ -42,8 +43,9 @@ from llm.prompts import (
     get_wrap_up_prompt,
 )
 from state.machine import CallState, CallStateMachine
+from pipeline.verifier import verify_utterance
 from tools.tms_tools import TMSTools
-from tools.call_control import end_call_session
+from tools.call_control import end_call_session, transfer_to_human_dispatcher
 from tools.booking_tools import BookingTools
 from tools.check_call_tools import CheckCallTools
 from tools.detention_tools import DetentionTools
@@ -81,10 +83,113 @@ def _get_company(ctx: RunContext) -> str:
 
 
 # =============================================================================
+# BASE AGENT — behavior shared by every dispatch mode
+# =============================================================================
+
+STT_CONFIDENCE_THRESHOLD = 0.55
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+
+def _verify_spoken(sentence: str, fsm) -> str:
+    """Run the anti-hallucination verifier over one draft sentence, grounding it in
+    the tools called this turn plus what the caller just said. Returns the
+    (possibly redacted) text to actually synthesize."""
+    sources = list(fsm.context.turn_facts) + [fsm.context.last_user_text]
+    result = verify_utterance(sentence, sources)
+    if result.intervened:
+        fsm.context.verifier_interventions += 1
+        fsm.context.exception_score = max(fsm.context.exception_score, 0.6)
+        logger.warning(
+            "verifier_redacted_ungrounded_fact",
+            call_id=fsm.context.call_id,
+            violations=[v.token for v in result.violations],
+        )
+    return result.text
+
+
+class NexusAgent(Agent):
+    """Base for all 12 dispatch mode agents. Adds, once:
+    - a single shared `transfer_to_human` tool (was duplicated across 11 agents),
+    - a pre-TTS anti-hallucination verifier (`tts_node`) that redacts any ungrounded
+      rate / $ / MC / DOT / load / booking number before it is spoken,
+    - STT low-confidence signalling (`stt_node`) for supervisor attention,
+    - per-turn grounding-fact reset (`on_user_turn_completed`).
+
+    Every mode agent inherits these; individual agents only define their own tools.
+    """
+
+    def _fsm(self):
+        try:
+            return self.session.userdata.get("state_machine")
+        except Exception:
+            return None
+
+    async def on_user_turn_completed(self, turn_ctx, new_message):
+        # A new user turn is starting → reset the grounding facts and remember what
+        # the caller just said (a read-back of it is legitimately groundable).
+        fsm = self._fsm()
+        if fsm is not None:
+            fsm.context.last_user_text = getattr(new_message, "text_content", "") or ""
+            fsm.reset_turn_facts()
+
+    async def stt_node(self, audio, model_settings):
+        # Pass STT events through; flag low-confidence finals for supervisor attention.
+        fsm = self._fsm()
+        async for ev in Agent.default.stt_node(self, audio, model_settings):
+            try:
+                if (
+                    fsm is not None
+                    and isinstance(ev, stt.SpeechEvent)
+                    and ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT
+                    and ev.alternatives
+                ):
+                    conf = ev.alternatives[0].confidence
+                    if conf is not None and 0 < conf < STT_CONFIDENCE_THRESHOLD:
+                        fsm.context.stt_confidence_low = True
+                        fsm.context.exception_score = max(fsm.context.exception_score, 0.4)
+                        logger.info("low_stt_confidence", call_id=fsm.context.call_id, confidence=conf)
+            except Exception:
+                pass
+            yield ev
+
+    async def tts_node(self, text, model_settings):
+        # Verify each sentence against grounded facts BEFORE it is synthesized.
+        # Sentence-level streaming keeps latency low while blocking ungrounded numbers.
+        fsm = self._fsm()
+        if fsm is None:
+            async for frame in Agent.default.tts_node(self, text, model_settings):
+                yield frame
+            return
+
+        async def _verified():
+            buf = ""
+            async for chunk in text:
+                buf += chunk
+                while True:
+                    m = _SENTENCE_BOUNDARY.search(buf)
+                    if not m:
+                        break
+                    sentence, buf = buf[: m.end()], buf[m.end():]
+                    yield _verify_spoken(sentence, fsm)
+            if buf.strip():
+                yield _verify_spoken(buf, fsm)
+
+        async for frame in Agent.default.tts_node(self, _verified(), model_settings):
+            yield frame
+
+    @function_tool()
+    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
+        """Transfer the call to a senior dispatcher. LAST RESORT ONLY — use only after
+        2-3 recovery attempts have failed, for a genuine emergency (breakdown), or when
+        a caller explicitly and repeatedly demands someone else. Never say 'human'."""
+        return await transfer_to_human_dispatcher(ctx, reason)
+
+
+# =============================================================================
 # 1. GREETING AGENT (Intent Router)
 # =============================================================================
 
-class GreetingAgent(Agent):
+class GreetingAgent(NexusAgent):
     """
     Phase 1: Greet the caller, collect their identity, and detect intent.
     Routes to the appropriate specialized agent based on what the caller needs.
@@ -109,7 +214,7 @@ class GreetingAgent(Agent):
         fsm.context.driver_equipment = equipment_type
         if fsm.transition(CallState.QUALIFICATION):
             logger.info("Routing to LOAD BOOKING", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(QualificationAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(QualificationAgent(tenant_company=_get_company(ctx)))
             return f"Moved to load search. Driver: {driver_name}, MC: {mc_number}."
         return "Cannot route to load booking right now."
 
@@ -130,7 +235,7 @@ class GreetingAgent(Agent):
 
         if fsm.transition(CallState.CHECK_CALL):
             logger.info("Routing to CHECK CALL", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(CheckCallAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(CheckCallAgent(tenant_company=_get_company(ctx)))
             return f"SYSTEM: Moved to check call mode. PRE-FETCHED LOCATION: {location_data}. Tell the user this location immediately."
         return "Cannot route to check call right now."
 
@@ -151,7 +256,7 @@ class GreetingAgent(Agent):
 
         if fsm.transition(CallState.LOAD_STATUS):
             logger.info("Routing to LOAD STATUS", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(LoadStatusAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(LoadStatusAgent(tenant_company=_get_company(ctx)))
             return f"SYSTEM: Moved to load status mode. PRE-FETCHED STATUS: {status_data}. Tell the user this status immediately."
         return "Cannot route to load status right now."
 
@@ -172,7 +277,7 @@ class GreetingAgent(Agent):
 
         if fsm.transition(CallState.ETA_UPDATE):
             logger.info("Routing to ETA UPDATE", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(ETAUpdateAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(ETAUpdateAgent(tenant_company=_get_company(ctx)))
             return f"SYSTEM: Moved to ETA update mode. PRE-FETCHED ETA: {eta_data}. Tell the user this ETA immediately."
         return "Cannot route to ETA update right now."
 
@@ -187,7 +292,7 @@ class GreetingAgent(Agent):
         fsm.context.check_call_load_id = load_id
         if fsm.transition(CallState.DETENTION):
             logger.info("Routing to DETENTION", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(DetentionAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(DetentionAgent(tenant_company=_get_company(ctx)))
             return f"Moved to detention claim mode."
         return "Cannot route to detention right now."
 
@@ -202,7 +307,7 @@ class GreetingAgent(Agent):
         fsm.context.breakdown_location = location
         if fsm.transition(CallState.BREAKDOWN):
             logger.info("Routing to BREAKDOWN", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(BreakdownAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(BreakdownAgent(tenant_company=_get_company(ctx)))
             return f"Moved to breakdown mode. Location: {location}."
         return "Cannot route to breakdown right now."
 
@@ -216,7 +321,7 @@ class GreetingAgent(Agent):
         fsm.context.document_type = doc_type
         if fsm.transition(CallState.DOCUMENT_REQUEST):
             logger.info("Routing to DOCUMENT REQUEST", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(DocumentAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(DocumentAgent(tenant_company=_get_company(ctx)))
             return f"Moved to document request mode. Type: {doc_type}."
         return "Cannot route to document request right now."
 
@@ -231,25 +336,17 @@ class GreetingAgent(Agent):
         fsm.context.onboarding_mc_number = mc_number
         if fsm.transition(CallState.ONBOARDING):
             logger.info("Routing to ONBOARDING", call_id=fsm.context.call_id)
-            await ctx.session.update_agent(OnboardingAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(OnboardingAgent(tenant_company=_get_company(ctx)))
             return f"Moved to onboarding mode."
         return "Cannot route to onboarding right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer the call to a senior dispatcher. LAST RESORT ONLY — use after 2-3 recovery attempts have failed, or for genuine emergencies."""
-        fsm = _get_fsm(ctx)
-        fsm.context.transferred_to_human = True
-        fsm.context.transfer_reason = reason
-        logger.warning("Call transferred to senior", call_id=fsm.context.call_id, reason=reason)
-        return f"SYSTEM: Call is being transferred to a senior dispatcher. Reason: {reason}. Tell the caller: 'Let me connect you with one of our senior dispatchers.' Do NOT say 'human'."
 
 
 # =============================================================================
 # 2. QUALIFICATION AGENT (Load Search)
 # =============================================================================
 
-class QualificationAgent(Agent):
+class QualificationAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_qualification_prompt(company_name=tenant_company))
 
@@ -281,7 +378,7 @@ class QualificationAgent(Agent):
         fsm.context.selected_lane_id = lane_id
         if fsm.transition(CallState.NEGOTIATION):
             logger.info("Transitioning to NEGOTIATION", call_id=fsm.context.call_id, load_id=load_id)
-            await ctx.session.update_agent(NegotiationAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(NegotiationAgent(tenant_company=_get_company(ctx)))
             return f"Moved to negotiation for load {load_id} on lane {lane_id}."
         return "Cannot transition to negotiation right now."
 
@@ -290,23 +387,17 @@ class QualificationAgent(Agent):
         """If no loads match the driver's needs, gracefully end the call."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return f"Moving to wrap-up. Reason: {reason}"
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a senior dispatcher. LAST RESORT — try recovery first."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        logger.warning("Call transferred to senior", call_id=fsm.context.call_id, reason=reason)
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me get one of our senior team members for you.'"
 
 
 # =============================================================================
 # 3. NEGOTIATION AGENT
 # =============================================================================
 
-class NegotiationAgent(Agent):
+class NegotiationAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_negotiation_prompt(company_name=tenant_company))
 
@@ -344,7 +435,7 @@ class NegotiationAgent(Agent):
         fsm = _get_fsm(ctx); fsm.context.agreed_rate = agreed_rate
         if fsm.transition(CallState.BOOKING):
             logger.info("Transitioning to BOOKING", call_id=fsm.context.call_id, agreed_rate=agreed_rate)
-            await ctx.session.update_agent(BookingAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(BookingAgent(tenant_company=_get_company(ctx)))
             return f"Moved to booking. Agreed rate: ${agreed_rate}/mile."
         return "Cannot transition to booking right now."
 
@@ -353,22 +444,17 @@ class NegotiationAgent(Agent):
         """Go back to load search if the driver wants different loads."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.QUALIFICATION):
-            await ctx.session.update_agent(QualificationAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(QualificationAgent(tenant_company=_get_company(ctx)))
             return f"Going back to load search. Reason: {reason}"
         return "Cannot go back right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a senior dispatcher. LAST RESORT."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me get my manager to take a look at this for you.'"
 
 
 # =============================================================================
 # 4. BOOKING AGENT
 # =============================================================================
 
-class BookingAgent(Agent):
+class BookingAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_booking_prompt(company_name=tenant_company))
 
@@ -394,22 +480,17 @@ class BookingAgent(Agent):
         """Call after the booking is confirmed to end the call."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moved to wrap-up. Thank the driver and end the call."
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a senior dispatcher. LAST RESORT."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me have one of our senior dispatchers finalize this for you.'"
 
 
 # =============================================================================
 # 5. CHECK CALL AGENT
 # =============================================================================
 
-class CheckCallAgent(Agent):
+class CheckCallAgent(NexusAgent):
     """Handles 'where is my truck?' calls."""
 
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
@@ -441,7 +522,7 @@ class CheckCallAgent(Agent):
         """Move to ETA update mode if the caller needs an ETA sent to someone."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.ETA_UPDATE):
-            await ctx.session.update_agent(ETAUpdateAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(ETAUpdateAgent(tenant_company=_get_company(ctx)))
             return "Moved to ETA update mode."
         return "Cannot transition right now."
 
@@ -450,22 +531,17 @@ class CheckCallAgent(Agent):
         """End the call after providing the location."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moving to wrap-up."
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a senior dispatcher. LAST RESORT."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me connect you with one of our senior team members.'"
 
 
 # =============================================================================
 # 6. ETA UPDATE AGENT
 # =============================================================================
 
-class ETAUpdateAgent(Agent):
+class ETAUpdateAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_eta_update_prompt(company_name=tenant_company))
 
@@ -486,22 +562,17 @@ class ETAUpdateAgent(Agent):
         """End the call."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moving to wrap-up."
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a human."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me get one of our senior dispatchers on the line for you.'"
 
 
 # =============================================================================
 # 7. LOAD STATUS AGENT
 # =============================================================================
 
-class LoadStatusAgent(Agent):
+class LoadStatusAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_load_status_prompt(company_name=tenant_company))
 
@@ -522,7 +593,7 @@ class LoadStatusAgent(Agent):
         """Move to check call mode if they need detailed location."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.CHECK_CALL):
-            await ctx.session.update_agent(CheckCallAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(CheckCallAgent(tenant_company=_get_company(ctx)))
             return "Moved to check call mode."
         return "Cannot transition right now."
 
@@ -531,22 +602,17 @@ class LoadStatusAgent(Agent):
         """End the call."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moving to wrap-up."
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a human."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me connect you with one of our senior team members.'"
 
 
 # =============================================================================
 # 8. DETENTION AGENT
 # =============================================================================
 
-class DetentionAgent(Agent):
+class DetentionAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_detention_prompt(company_name=tenant_company))
 
@@ -577,22 +643,17 @@ class DetentionAgent(Agent):
         """End the call after filing the claim."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moving to wrap-up."
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a human."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me get one of our senior dispatchers to help with this.'"
 
 
 # =============================================================================
 # 9. BREAKDOWN AGENT
 # =============================================================================
 
-class BreakdownAgent(Agent):
+class BreakdownAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_breakdown_prompt(company_name=tenant_company))
 
@@ -620,21 +681,13 @@ class BreakdownAgent(Agent):
             f"A senior dispatcher will coordinate roadside assistance. Tell the caller you're connecting them with your senior team."
         )
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """ALWAYS transfer to human after a breakdown report."""
-        fsm = _get_fsm(ctx)
-        fsm.context.transferred_to_human = True
-        fsm.context.transfer_reason = reason
-        logger.warning("Breakdown escalated to senior", call_id=fsm.context.call_id, reason=reason)
-        return f"SYSTEM: Connecting to senior dispatcher for roadside assistance. Reason: {reason}. Tell the caller: 'I'm connecting you with one of our senior dispatchers right now. They'll get you taken care of.'"
 
     @function_tool()
     async def transition_to_wrap_up(self, ctx: RunContext) -> str:
         """End the call (only after human transfer is arranged)."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moving to wrap-up."
         return "Cannot wrap up right now."
 
@@ -643,7 +696,7 @@ class BreakdownAgent(Agent):
 # 10. DOCUMENT AGENT
 # =============================================================================
 
-class DocumentAgent(Agent):
+class DocumentAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_document_prompt(company_name=tenant_company))
 
@@ -679,22 +732,17 @@ class DocumentAgent(Agent):
         """End the call after sending the document."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moving to wrap-up."
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a human."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me connect you with one of our senior team members.'"
 
 
 # =============================================================================
 # 11. ONBOARDING AGENT
 # =============================================================================
 
-class OnboardingAgent(Agent):
+class OnboardingAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_onboarding_prompt(company_name=tenant_company))
 
@@ -735,7 +783,7 @@ class OnboardingAgent(Agent):
         """Move to load search after onboarding (if they want to find a load)."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.QUALIFICATION):
-            await ctx.session.update_agent(QualificationAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(QualificationAgent(tenant_company=_get_company(ctx)))
             return "Moved to load search. Let's find you a load!"
         return "Cannot transition right now."
 
@@ -744,22 +792,17 @@ class OnboardingAgent(Agent):
         """End the call after registration."""
         fsm = _get_fsm(ctx)
         if fsm.transition(CallState.WRAP_UP):
-            await ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
+            ctx.session.update_agent(WrapUpAgent(tenant_company=_get_company(ctx)))
             return "Moving to wrap-up."
         return "Cannot wrap up right now."
 
-    @function_tool()
-    async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:
-        """Transfer to a human."""
-        fsm = _get_fsm(ctx); fsm.context.transferred_to_human = True; fsm.context.transfer_reason = reason
-        return f"SYSTEM: Transferring to senior dispatcher. Reason: {reason}. Tell the caller: 'Let me get one of our senior dispatchers for you.'"
 
 
 # =============================================================================
 # 12. WRAP-UP AGENT
 # =============================================================================
 
-class WrapUpAgent(Agent):
+class WrapUpAgent(NexusAgent):
     def __init__(self, tenant_company: str = "Nexus Dispatch"):
         super().__init__(instructions=get_wrap_up_prompt(company_name=tenant_company))
 

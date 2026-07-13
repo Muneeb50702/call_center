@@ -1,8 +1,13 @@
 """
-Nexus Dispatch — Human Intervention Subsystem
+Nexus Dispatch — Human Intervention Subsystem (LiveKit Agents 1.x)
 
-Listens to Redis for mid-call instructions (whispers) from human operators
-and injects them into the agent's LLM context.
+Listens on Redis for mid-call "whispers" from a human supervisor in the dashboard
+and injects them into the live agent as an instruction for its next reply.
+
+The pre-1.0 approach (mutating `session.chat_ctx.messages`) silently no-op'd on
+1.x because `chat_ctx` is a read-only copy. The 1.x path is
+`session.generate_reply(instructions=...)`, which steers the agent's next turn
+without a fragile handle to the (possibly since-handed-off) current agent.
 """
 
 import asyncio
@@ -10,11 +15,11 @@ import json
 import os
 import structlog
 import redis.asyncio as aioredis
-from livekit.agents.llm import ChatMessage, ChatRole
 
 logger = structlog.get_logger()
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 
 class HumanInterventionService:
     def __init__(self, session, call_id: str):
@@ -38,34 +43,35 @@ class HumanInterventionService:
         try:
             pubsub = self._redis.pubsub()
             await pubsub.subscribe(f"nexus:whisper:{self.call_id}")
-            
+
             async for message in pubsub.listen():
-                if message["type"] == "message":
+                if message["type"] != "message":
+                    continue
+                try:
                     data = json.loads(message["data"])
-                    text = data.get("text")
-                    if text and hasattr(self.session, "chat_ctx"):
-                        logger.info("Received whisper from dashboard", call_id=self.call_id, text=text)
-                        
-                        # Inject the whisper as a system prompt into the active chat context
-                        instruction = (
-                            f"[URGENT INSTRUCTION FROM YOUR MANAGER]: {text}\n"
-                            "Acknowledge this internally and weave this instruction into your next response naturally."
-                        )
-                        
-                        self.session.chat_ctx.messages.append(
-                            ChatMessage(
-                                role=ChatRole.SYSTEM,
-                                content=instruction
-                            )
-                        )
-                        
-                        # If the agent is idle, we could force a turn, but usually 
-                        # the driver is talking or will talk soon. If we need to force
-                        # the agent to speak immediately, we can generate a turn:
-                        # asyncio.create_task(self.session.generate_reply())
-                        # For now, just injecting it into context is safest.
-                        
+                except (ValueError, TypeError):
+                    continue
+                text = (data.get("text") or "").strip()
+                if not text:
+                    continue
+
+                logger.info("Received whisper from dashboard", call_id=self.call_id, text=text)
+                instruction = (
+                    "A senior human dispatcher supervising this call has given you this "
+                    f"instruction — follow it naturally in your next response: {text}"
+                )
+                try:
+                    # Steers the agent's next reply. Respects turn-taking / interruptions.
+                    self.session.generate_reply(instructions=instruction)
+                except Exception as e:
+                    logger.error("Failed to apply whisper", call_id=self.call_id, error=str(e))
+
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error("Error in human intervention listener", error=str(e))
+        finally:
+            try:
+                await self._redis.aclose()
+            except Exception:
+                pass

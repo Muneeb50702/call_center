@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir hatchling && \
     "alembic>=1.13" \
     "passlib[bcrypt]>=1.7" \
     "bcrypt<4.0.0" \
+    "livekit-api>=1.0" \
     "structlog>=24.1.0"
 
 # We will mount the source code via docker-compose volume for hot reloading

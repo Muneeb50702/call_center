@@ -8,6 +8,8 @@ Looks up load location, calculates ETA, and sends status notifications.
 import structlog
 import httpx
 
+from tools.service_http import service_headers
+
 logger = structlog.get_logger()
 
 
@@ -17,9 +19,11 @@ class CheckCallTools:
     One instance per call, initialized with the tenant's TMS base URL.
     """
 
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", tenant_id: str = ""):
         self.base_url = base_url
-        self.client = httpx.AsyncClient(base_url=base_url, timeout=5.0)
+        self.client = httpx.AsyncClient(
+            base_url=base_url, timeout=5.0, headers=service_headers(tenant_id)
+        )
 
     async def get_load_location(self, load_id: str) -> str:
         """Get the current GPS location and status of a load."""

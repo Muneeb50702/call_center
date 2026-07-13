@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir hatchling && \
     "livekit-plugins-silero>=1.0" \
     "livekit-plugins-openai>=1.0" \
     "livekit-plugins-google>=0.1" \
+    "livekit-plugins-turn-detector~=1.0" \
     "openai>=1.30" \
     "httpx>=0.27" \
     "pydantic>=2.7" \

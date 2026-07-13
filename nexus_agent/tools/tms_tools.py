@@ -13,6 +13,8 @@ import asyncio
 import httpx
 import structlog
 
+from tools.service_http import service_headers
+
 logger = structlog.get_logger()
 
 # Retry configuration
@@ -27,11 +29,12 @@ class TMSTools:
     One instance per call, initialized with the tenant's TMS base URL.
     """
 
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", tenant_id: str = ""):
         self.base_url = base_url
         self.client = httpx.AsyncClient(
             base_url=base_url,
             timeout=REQUEST_TIMEOUT,
+            headers=service_headers(tenant_id),
         )
 
     async def _request_with_retry(

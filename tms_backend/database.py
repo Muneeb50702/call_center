@@ -109,14 +109,14 @@ class TenantDB(Base):
     tms_api_key: Mapped[str] = mapped_column(String(255), default="")
 
     # Voice & STT
-    voice_model: Mapped[str] = mapped_column(String(64), default="aura-orion-en")
+    voice_model: Mapped[str] = mapped_column(String(64), default="aura-2-apollo-en")
     custom_keywords: Mapped[Optional[str]] = mapped_column(JSON, default=list)
 
     # Business Rules
     negotiation_floor_pct: Mapped[float] = mapped_column(Float, default=0.90)
     max_negotiation_rounds: Mapped[int] = mapped_column(Integer, default=3)
     max_concurrent_calls: Mapped[int] = mapped_column(Integer, default=20)
-    llm_model: Mapped[str] = mapped_column(String(64), default="gemini-1.5-flash")
+    llm_model: Mapped[str] = mapped_column(String(64), default="gemini-2.5-flash")
     llm_temperature: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Auth
@@ -338,6 +338,15 @@ class CallDB(Base):
 
     # Recording
     recording_path: Mapped[str] = mapped_column(String(512), default="")
+
+    # Direction (outbound support — Phase 1+)
+    direction: Mapped[str] = mapped_column(String(16), default="inbound")  # inbound | outbound
+
+    # Transcript + quality signals (Phase 0)
+    # transcript: list of {"speaker": "user|agent", "text": str, "ts": float}
+    transcript: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    sentiment: Mapped[str] = mapped_column(String(16), default="neutral")  # neutral|positive|negative
+    exception_peak: Mapped[float] = mapped_column(Float, default=0.0)  # peak supervisor-attention score
 
     # Latency
     avg_latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

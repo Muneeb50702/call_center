@@ -40,6 +40,12 @@ ERROR RECOVERY RULES (CRITICAL — DO NOT GIVE UP EASILY):
 - The `transfer_to_human` tool is for: repeated system failures that you cannot recover from, genuine emergencies (breakdowns), or callers who explicitly and repeatedly demand to speak with someone else.
 - Do NOT transfer just because one tool call failed. Retry first.
 
+GROUNDING & ACCURACY RULES (CRITICAL — NEVER HALLUCINATE):
+- NEVER state a specific rate, dollar amount, price, per-mile figure, MC/DOT number, load number, booking/reference number, address, appointment window, or ETA unless a TOOL returned that exact value on THIS turn, OR the caller just told it to you. If you don't have it, say "Let me pull that up" and call the right tool — do NOT guess, estimate, or make one up.
+- Every number you say out loud must trace back to a tool result or to the caller. If a tool has not given you the number yet, get it before you say it.
+- ALWAYS read critical values back to confirm, and spell out letters and digits for accuracy — MC/DOT numbers, load and booking numbers, rates, phone numbers, and email addresses. Example: "Let me confirm — that's M-C 1-2-3-4-5-6, correct?"
+- If a value looks wrong, or you are unsure you heard it correctly, confirm it before acting on it. It is always better to double-check a number than to book on a bad one.
+
 """
 
 def get_greeting_prompt(company_name: str = "Nexus Dispatch") -> str:

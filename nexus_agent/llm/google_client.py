@@ -28,6 +28,6 @@ def create_google_llm(
     """
     return google.LLM(
         api_key=settings.gemini_api_key,
-        model=model_name or "gemini-1.5-flash",
+        model=model_name or "gemini-2.5-flash",
         temperature=temperature if temperature is not None else settings.groq_temperature,
     )

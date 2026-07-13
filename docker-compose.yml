@@ -49,6 +49,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://nexus:${POSTGRES_PASSWORD:-nexus_dev_password}@postgres:5432/nexus_dispatch
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET=${JWT_SECRET:-nexus_jwt_dev_secret_change_in_production}
+      - NEXUS_SERVICE_KEY=${NEXUS_SERVICE_KEY:-nexus_dev_service_key_change_me}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -77,6 +78,8 @@ services:
     environment:
       - TMS_BASE_URL=http://tms-backend:8000
       - REDIS_URL=redis://redis:6379/0
+      # Must match the backend's NEXUS_SERVICE_KEY so agent→backend calls authenticate.
+      - NEXUS_SERVICE_KEY=${NEXUS_SERVICE_KEY:-nexus_dev_service_key_change_me}
     dns:
       - 8.8.8.8
       - 8.8.4.4

@@ -154,6 +154,25 @@ class CallContext:
     transferred_to_human: bool = False
     transfer_reason: str = ""
 
+    # ── Direction & campaign (outbound support — Phase 1+) ──
+    direction: str = "inbound"        # "inbound" | "outbound"
+    campaign_id: str = ""
+    disclosure_done: bool = False     # AI-disclosure opener spoken (outbound)
+
+    # ── Anti-hallucination & quality signals (Phase 0) ──
+    # Raw tool outputs gathered during the CURRENT llm turn. The pre-TTS
+    # verifier (pipeline/verifier.py) checks that every critical fact the agent
+    # is about to speak is grounded in one of these strings. Reset each turn.
+    turn_facts: list[str] = field(default_factory=list)
+    last_user_text: str = ""          # most recent final user transcript (a grounding source)
+    stt_confidence_low: bool = False
+    sentiment: str = "neutral"        # neutral | positive | negative
+    exception_score: float = 0.0      # 0..1 — higher pulls supervisor attention
+    verifier_interventions: int = 0   # count of ungrounded facts caught this call
+
+    # Full turn-by-turn transcript: list of {"speaker": "user|agent", "text": str}
+    transcript: list = field(default_factory=list)
+
 
 class CallStateMachine:
     """
@@ -163,12 +182,16 @@ class CallStateMachine:
     Validates transitions and emits structured logs for analytics.
     """
 
-    def __init__(self, tenant_id: str = "", company_name: str = ""):
+    def __init__(self, tenant_id: str = "", company_name: str = "", on_transition=None):
         self._current_state = CallState.GREETING
         self.context = CallContext(
             tenant_id=tenant_id,
             company_name=company_name,
         )
+        # Optional callback(previous: CallState, new: CallState) fired after a
+        # successful transition — lets pipeline/hooks.py publish state changes to
+        # Redis without monkeypatching the method (the old approach was broken).
+        self.on_transition = on_transition
         self.context.states_visited.append(CallState.GREETING.value)
         logger.info(
             "Call state machine initialized",
@@ -225,11 +248,33 @@ class CallStateMachine:
             to_state=target.value,
             elapsed_seconds=round(time.time() - self.context.call_start_time, 2),
         )
+
+        # Notify observers (e.g. Redis publisher) without breaking the call if
+        # the callback raises.
+        if self.on_transition is not None:
+            try:
+                self.on_transition(previous, target)
+            except Exception as e:
+                logger.debug("on_transition callback failed", error=str(e))
         return True
 
     def record_tool_invocation(self, tool_name: str):
         """Track which tools were used during this call."""
         self.context.tools_invoked.append(tool_name)
+
+    def reset_turn_facts(self):
+        """Clear grounded tool outputs at the start of a new LLM turn."""
+        self.context.turn_facts = []
+
+    def add_turn_fact(self, text) -> None:
+        """Record a tool's raw output as a grounded fact for the current turn.
+
+        The pre-TTS verifier uses these strings as the allow-list of values the
+        agent may speak (rates, MC/DOT/load numbers, prices, ETAs, addresses).
+        """
+        if text is None:
+            return
+        self.context.turn_facts.append(str(text))
 
     def get_call_duration(self) -> float:
         """Get the current call duration in seconds."""

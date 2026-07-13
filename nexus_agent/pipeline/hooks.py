@@ -1,164 +1,135 @@
 """
-Nexus Dispatch — Pipeline Hooks & Observability
+Nexus Dispatch — Pipeline Hooks & Observability (LiveKit Agents 1.x)
 
-Hooks into the LiveKit AgentSession event system for:
-- End-to-end latency measurement (user speech end → agent speech start)
-- Barge-in detection logging
-- Tool execution timing
-- Call duration tracking
-- State transition logging
+Wires the AgentSession event stream to:
+- Live transcript + state publishing to Redis (channel nexus:live:{tenant}) for the
+  dashboard live-monitor.
+- End-to-end latency capture via `metrics_collected`.
+- Tool-output capture into the per-turn grounding facts (feeds the anti-hallucination
+  verifier in state/agents.py).
+- Structured logging.
 
-All metrics are emitted as structured JSON via structlog for ingestion
-by any monitoring stack (Datadog, Grafana, CloudWatch, etc.).
+This replaces the pre-1.0 event names (`user_speech_committed`, `agent_speech_*`,
+`session.llm_node.on(...)`) and the `transition_to` monkeypatch — all of which
+silently no-op'd on livekit-agents 1.x, so the live monitor never showed anything.
+
+Verified against livekit-agents 1.6.5 event surface:
+  user_input_transcribed · conversation_item_added · metrics_collected ·
+  function_tools_executed · agent_state_changed · error
 """
 
-import time
+import asyncio
+import json
+import os
 import structlog
 
-from state.machine import CallStateMachine
+from livekit.agents import metrics as lk_metrics
+from state.machine import CallStateMachine, CallState
 
 logger = structlog.get_logger()
 
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-def setup_hooks(session, state_machine: CallStateMachine | None = None):
-    """
-    Wire observability hooks into the AgentSession.
-    
+
+def setup_hooks(session, state_machine: CallStateMachine | None = None, analytics=None, redis_client=None):
+    """Attach observability hooks to a running AgentSession.
+
     Args:
-        session: The LiveKit AgentSession instance.
-        state_machine: Optional CallStateMachine for enriched logging.
+        session: the LiveKit AgentSession.
+        state_machine: per-call CallStateMachine (for context + transcript accrual).
+        analytics: optional CallAnalytics to receive latency samples.
+        redis_client: optional shared redis.asyncio client. If None, one is created
+            (the caller owns closing whichever it passed).
     """
-    # Timing state for latency measurement
-    timing = {
-        "user_speech_end_time": None,
-        "agent_speech_start_time": None,
-        "tool_start_times": {},
-    }
+    if redis_client is None:
+        import redis.asyncio as aioredis
+        redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
 
-    call_id = state_machine.context.call_id if state_machine else "unknown"
+    ctx = state_machine.context if state_machine else None
+    call_id = ctx.call_id if ctx else "unknown"
+    tenant_id = ctx.tenant_id if ctx else "unknown"
 
-    import asyncio
-    import json
-    import os
-    import redis.asyncio as aioredis
-    from livekit.agents.llm import ChatMessage
-
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-
-    tenant_id = state_machine.context.tenant_id if state_machine else "unknown"
-
-    async def _publish(message: dict):
+    def _publish(message: dict):
+        async def _do():
+            try:
+                payload = {**message, "tenant_id": tenant_id, "call_id": call_id}
+                await redis_client.publish(f"nexus:live:{tenant_id}", json.dumps(payload))
+            except Exception as e:
+                logger.debug("redis publish failed", error=str(e))
         try:
-            msg = {**message, "tenant_id": tenant_id, "call_id": call_id}
-            await redis_client.publish(f"nexus:live:{tenant_id}", json.dumps(msg))
-        except Exception as e:
-            logger.debug("Failed to publish to redis", error=str(e))
+            asyncio.create_task(_do())
+        except RuntimeError:
+            pass  # no running loop (shouldn't happen inside the session)
 
-    # ── User Speech Events ──
+    # ── State transitions (replaces the broken monkeypatch) ──
+    if state_machine is not None:
+        def _on_transition(previous: CallState, new: CallState):
+            _publish({"type": "state_changed", "old_state": previous.value, "new_state": new.value})
+        state_machine.on_transition = _on_transition
 
-    @session.on("user_speech_started")
-    def on_user_speech_started():
-        logger.info(
-            "user_speech_started",
-            call_id=call_id,
-            event="barge_in_possible",
-            current_state=state_machine.current_state.value if state_machine else "unknown",
-        )
+    # ── User transcript (partial + final) ──
+    @session.on("user_input_transcribed")
+    def _on_user_transcribed(ev):
+        text = getattr(ev, "transcript", "") or ""
+        is_final = bool(getattr(ev, "is_final", False))
+        _publish({"type": "transcript", "speaker": "user", "text": text, "is_final": is_final})
+        if is_final and ctx is not None and text.strip():
+            ctx.transcript.append({"speaker": "user", "text": text})
 
-    @session.on("user_speech_committed")
-    def on_user_speech_committed(msg: ChatMessage):
-        # Publish user transcript
-        if msg.content:
-            asyncio.create_task(_publish({
-                "type": "transcript",
-                "speaker": "user",
-                "text": msg.content
-            }))
+    # ── Committed messages (we publish the agent's finished turns) ──
+    @session.on("conversation_item_added")
+    def _on_item_added(ev):
+        item = getattr(ev, "item", None)
+        role = getattr(item, "role", None)
+        text = getattr(item, "text_content", None) or ""
+        if role == "assistant" and text.strip():
+            _publish({"type": "transcript", "speaker": "agent", "text": text})
+            if ctx is not None:
+                ctx.transcript.append({"speaker": "agent", "text": text})
 
-    @session.on("user_speech_finished")
-    def on_user_speech_finished():
-        timing["user_speech_end_time"] = time.monotonic()
-        logger.debug(
-            "user_speech_finished",
-            call_id=call_id,
-        )
+    # ── Latency / usage metrics ──
+    @session.on("metrics_collected")
+    def _on_metrics(ev):
+        m = getattr(ev, "metrics", None)
+        try:
+            lk_metrics.log_metrics(m)
+        except Exception:
+            pass
+        # ttft is the dominant controllable latency (present on LLM metrics)
+        ttft = getattr(m, "ttft", None)
+        if ttft and ttft > 0:
+            ms = round(ttft * 1000)
+            if analytics is not None:
+                analytics.record_latency(ms)
+            _publish({"type": "latency", "metric": "ttft_ms", "value": ms})
 
-    # ── Agent Speech Events ──
+    # ── Tool executions → grounding facts (anti-hallucination) + trace ──
+    @session.on("function_tools_executed")
+    def _on_tools(ev):
+        try:
+            pairs = list(ev.zipped())
+        except Exception:
+            pairs = []
+        for call, out in pairs:
+            name = getattr(call, "name", "tool")
+            output = getattr(out, "output", None) if out is not None else None
+            if state_machine is not None and output:
+                # The verifier only lets the agent speak values present in these outputs.
+                state_machine.add_turn_fact(output)
+            _publish({"type": "tool", "name": name})
+            logger.info("tool_executed", call_id=call_id, tool=name)
 
-    @session.on("agent_speech_started")
-    def on_agent_speech_started():
-        timing["agent_speech_start_time"] = time.monotonic()
+    # ── Agent state (initializing/idle/listening/thinking/speaking) ──
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev):
+        _publish({"type": "agent_state", "state": getattr(ev, "new_state", "")})
 
-        # Calculate end-to-end latency
-        if timing["user_speech_end_time"] is not None:
-            e2e_latency_ms = round(
-                (timing["agent_speech_start_time"] - timing["user_speech_end_time"]) * 1000
-            )
-            logger.info(
-                "latency_metric",
-                call_id=call_id,
-                metric="e2e_latency_ms",
-                value=e2e_latency_ms,
-                current_state=state_machine.current_state.value if state_machine else "unknown",
-            )
-            # Reset for next turn
-            timing["user_speech_end_time"] = None
+    # ── Pipeline errors ──
+    @session.on("error")
+    def _on_error(ev):
+        err = str(getattr(ev, "error", "error"))
+        _publish({"type": "alert", "level": "warning", "message": err})
+        logger.warning("session_error", call_id=call_id, error=err)
 
-    @session.on("agent_speech_committed")
-    def on_agent_speech_committed(msg: ChatMessage):
-        # Publish agent transcript
-        if msg.content:
-            asyncio.create_task(_publish({
-                "type": "transcript",
-                "speaker": "agent",
-                "text": msg.content
-            }))
-
-    @session.on("agent_speech_finished")
-    def on_agent_speech_finished():
-        logger.debug(
-            "agent_speech_finished",
-            call_id=call_id,
-        )
-
-    # ── State Change Events ──
-    if state_machine:
-        original_transition = state_machine.transition_to
-        def hooked_transition(new_state):
-            original_transition(new_state)
-            asyncio.create_task(_publish({
-                "type": "state_changed",
-                "new_state": new_state.value
-            }))
-        state_machine.transition_to = hooked_transition
-
-    # ── Function Call Events (Tool Execution) ──
-
-    if hasattr(session, "llm_node") and session.llm_node:
-        @session.llm_node.on("function_call_start")
-        def on_function_call_start(tool):
-            tool_name = str(tool)
-            timing["tool_start_times"][tool_name] = time.monotonic()
-            logger.info(
-                "tool_execution_started",
-                call_id=call_id,
-                tool=tool_name,
-                current_state=state_machine.current_state.value if state_machine else "unknown",
-            )
-
-        @session.llm_node.on("function_call_end")
-        def on_function_call_end(tool, result):
-            tool_name = str(tool)
-            start_time = timing["tool_start_times"].pop(tool_name, None)
-            duration_ms = 0
-            if start_time:
-                duration_ms = round((time.monotonic() - start_time) * 1000)
-
-            logger.info(
-                "tool_execution_finished",
-                call_id=call_id,
-                tool=tool_name,
-                duration_ms=duration_ms,
-                current_state=state_machine.current_state.value if state_machine else "unknown",
-            )
+    logger.info("Pipeline hooks wired (livekit-agents 1.x)", call_id=call_id, tenant_id=tenant_id)
+    return redis_client

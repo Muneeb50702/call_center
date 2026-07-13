@@ -9,6 +9,8 @@ import httpx
 import structlog
 from typing import Optional
 
+from tools.service_http import service_headers
+
 logger = structlog.get_logger()
 
 
@@ -18,10 +20,11 @@ class BookingTools:
     One instance per call, initialized with the tenant's TMS URL.
     """
 
-    def __init__(self, base_url: str, timeout: float = 10.0):
+    def __init__(self, base_url: str, timeout: float = 10.0, tenant_id: str = ""):
         self.client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
+            headers=service_headers(tenant_id),
         )
 
     async def confirm_booking(

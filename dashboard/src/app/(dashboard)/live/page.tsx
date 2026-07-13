@@ -33,8 +33,8 @@ export default function LiveMonitorPage() {
 
   // Connect to WebSocket
   useEffect(() => {
-    // In production, we'd get this from a proper auth context or API call
-    const token = localStorage.getItem("token") || "test_token"; 
+    // Use the same token key the REST client uses (see lib/api.ts).
+    const token = localStorage.getItem("access_token") || "";
     // Usually WebSocket URL replaces http:// with ws://
     const wsUrl = process.env.NEXT_PUBLIC_API_URL?.replace("http", "ws") || "ws://localhost:8000";
     
