@@ -48,14 +48,64 @@ class TenantConfig(BaseModel):
         description="API key for authenticating with the tenant's TMS",
     )
 
+    # ── Persona ──
+    agent_profile: str = Field(
+        default="dispatch",
+        description=(
+            "Which persona this tenant runs: 'dispatch' (inbound freight dispatcher) "
+            "or 'sales' (outbound SDR). Selects the agent graph, the prompt family, "
+            "and the STT vocabulary."
+        ),
+    )
+    agent_name: str = Field(
+        default="Nexus",
+        description="The name the agent gives itself on the call",
+    )
+    disclosure_mode: str = Field(
+        default="if_asked",
+        description=(
+            "AI disclosure policy. 'if_asked' answers honestly the moment anyone asks "
+            "but does not volunteer it; 'upfront' discloses in the opening line. "
+            "Outbound calling carries disclosure obligations under FCC rules and "
+            "several state laws — 'if_asked' is the minimum defensible setting."
+        ),
+    )
+
+    campaign_id: str = Field(
+        default="",
+        description=(
+            "Outbound campaign that pins WHO is being called and WHY — see "
+            "llm/campaigns.py. Empty means a generic SDR that has to discover the "
+            "prospect from scratch on every call, which is what makes the agent "
+            "feel inconsistent between runs."
+        ),
+    )
+
+    # ── Knowledge base ──
+    knowledge_corpus: str = Field(
+        default="",
+        description=(
+            "Corpus name under rag/corpus/ to load into this tenant's knowledge "
+            "index at worker startup. Empty means no retrieval for this tenant."
+        ),
+    )
+
     # Voice & STT Customization
     voice_model: str = Field(
         default="aura-2-apollo-en",
-        description="Deepgram TTS voice model (e.g., 'aura-2-apollo-en', 'aura-2-hera-en')",
+        description=(
+            "Voice id from the registry, e.g. 'deepgram:aura-2-thalia-en' or "
+            "'cartesia:<uuid>'. Bare Deepgram model names are accepted for "
+            "backwards compatibility and normalised to 'deepgram:<model>'."
+        ),
     )
     custom_keywords: list[str] = Field(
         default_factory=list,
-        description="Additional STT keywords specific to this tenant's operations",
+        description=(
+            "Tenant-specific STT keyterms — company name, product names, client "
+            "names. These are the terms a generic model has never seen, so they "
+            "take priority over the persona's base vocabulary."
+        ),
     )
 
     # Business Rules
@@ -73,9 +123,17 @@ class TenantConfig(BaseModel):
     )
 
     # LLM Configuration
+    llm_provider: str = Field(
+        default="",
+        description=(
+            "Primary LLM vendor: 'gemini' | 'openai' | 'groq'. Empty uses "
+            "settings.llm_provider. The fallback is chosen automatically from a "
+            "different, reachable vendor — see llm/factory.py."
+        ),
+    )
     llm_model: str = Field(
         default="gemini-2.5-flash",
-        description="Primary LLM model for this tenant (Gemini via livekit-plugins-google)",
+        description="Primary LLM model for this tenant, matching llm_provider",
     )
     llm_temperature: float = Field(
         default=0.0,

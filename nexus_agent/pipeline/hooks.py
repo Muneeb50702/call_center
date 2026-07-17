@@ -31,7 +31,13 @@ logger = structlog.get_logger()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
-def setup_hooks(session, state_machine: CallStateMachine | None = None, analytics=None, redis_client=None):
+def setup_hooks(
+    session,
+    state_machine: CallStateMachine | None = None,
+    analytics=None,
+    redis_client=None,
+    telemetry=None,
+):
     """Attach observability hooks to a running AgentSession.
 
     Args:
@@ -40,6 +46,9 @@ def setup_hooks(session, state_machine: CallStateMachine | None = None, analytic
         analytics: optional CallAnalytics to receive latency samples.
         redis_client: optional shared redis.asyncio client. If None, one is created
             (the caller owns closing whichever it passed).
+        telemetry: optional TurnTelemetry. When present, every event published to
+            the supervisor dashboard is also published to the room's data channel,
+            which is what the demo page's live HUD renders.
     """
     if redis_client is None:
         import redis.asyncio as aioredis
@@ -50,6 +59,11 @@ def setup_hooks(session, state_machine: CallStateMachine | None = None, analytic
     tenant_id = ctx.tenant_id if ctx else "unknown"
 
     def _publish(message: dict):
+        # The dashboard consumes Redis; the demo page consumes the room data
+        # channel. Same event stream, two transports.
+        if telemetry is not None:
+            telemetry.publish(message)
+
         async def _do():
             try:
                 payload = {**message, "tenant_id": tenant_id, "call_id": call_id}
@@ -95,9 +109,19 @@ def setup_hooks(session, state_machine: CallStateMachine | None = None, analytic
             lk_metrics.log_metrics(m)
         except Exception:
             pass
-        # ttft is the dominant controllable latency (present on LLM metrics)
+
+        # Assemble the true per-turn breakdown (EOU + LLM TTFT + TTS TTFB). The
+        # telemetry object publishes a turn once all three stages have reported.
+        if telemetry is not None:
+            try:
+                telemetry.record(m)
+            except Exception as e:
+                logger.debug("telemetry record failed", error=str(e))
+
+        # Keep feeding TTFT to the legacy analytics store so the existing
+        # dashboard charts keep working.
         ttft = getattr(m, "ttft", None)
-        if ttft and ttft > 0:
+        if ttft and ttft > 0 and not getattr(m, "cancelled", False):
             ms = round(ttft * 1000)
             if analytics is not None:
                 analytics.record_latency(ms)
@@ -118,6 +142,19 @@ def setup_hooks(session, state_machine: CallStateMachine | None = None, analytic
                 state_machine.add_turn_fact(output)
             _publish({"type": "tool", "name": name})
             logger.info("tool_executed", call_id=call_id, tool=name)
+
+            # Retrieval gets its own event: the demo HUD shows which chunks
+            # grounded the answer, which is the whole argument that the agent is
+            # reading from the client's site rather than improvising.
+            if name == "search_knowledge_base" and ctx is not None:
+                _publish({
+                    "type": "kb_retrieval",
+                    "sources": ctx.kb_last_sources,
+                    "latency_ms": ctx.kb_last_latency_ms,
+                    "queries": ctx.kb_queries,
+                    "misses": ctx.kb_misses,
+                    "hit": bool(ctx.kb_last_sources),
+                })
 
     # ── Agent state (initializing/idle/listening/thinking/speaking) ──
     @session.on("agent_state_changed")

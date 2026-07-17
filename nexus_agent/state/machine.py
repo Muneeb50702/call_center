@@ -32,7 +32,7 @@ logger = structlog.get_logger()
 
 
 class CallState(str, enum.Enum):
-    """All phases of a freight dispatch call."""
+    """All phases of a call, across both personas (dispatch and outbound sales)."""
     # Entry point
     GREETING = "GREETING"
 
@@ -50,7 +50,16 @@ class CallState(str, enum.Enum):
     DOCUMENT_REQUEST = "DOCUMENT_REQUEST"
     ONBOARDING = "ONBOARDING"
 
-    # Terminal
+    # ── Outbound sales / SDR flow ──
+    # A separate graph reachable only from SALES_OPENING, which is an alternative
+    # entry point to GREETING. The two personas never transition into each other.
+    SALES_OPENING = "SALES_OPENING"
+    DISCOVERY = "DISCOVERY"
+    PITCH = "PITCH"
+    OBJECTION = "OBJECTION"
+    CLOSING = "CLOSING"
+
+    # Terminal (shared by both personas)
     WRAP_UP = "WRAP_UP"
 
 
@@ -81,6 +90,25 @@ TRANSITION_MAP: dict[CallState, list[CallState]] = {
     CallState.BREAKDOWN: [CallState.WRAP_UP],
     CallState.DOCUMENT_REQUEST: [CallState.WRAP_UP],
     CallState.ONBOARDING: [CallState.QUALIFICATION, CallState.WRAP_UP],  # After onboarding, can search loads
+
+    # ── Sales flow ──
+    # Deliberately permissive between DISCOVERY/PITCH/OBJECTION: a real sales
+    # conversation loops between understanding, pitching, and handling pushback in
+    # whatever order the prospect drives. Forcing a linear funnel here would make
+    # the agent refuse to answer a question at the "wrong" time, which reads as
+    # broken. Every state can reach CLOSING and WRAP_UP, because every call can
+    # end at any moment.
+    CallState.SALES_OPENING: [
+        CallState.DISCOVERY,
+        CallState.PITCH,
+        CallState.OBJECTION,
+        CallState.CLOSING,
+        CallState.WRAP_UP,
+    ],
+    CallState.DISCOVERY: [CallState.PITCH, CallState.OBJECTION, CallState.CLOSING, CallState.WRAP_UP],
+    CallState.PITCH: [CallState.DISCOVERY, CallState.OBJECTION, CallState.CLOSING, CallState.WRAP_UP],
+    CallState.OBJECTION: [CallState.DISCOVERY, CallState.PITCH, CallState.CLOSING, CallState.WRAP_UP],
+    CallState.CLOSING: [CallState.OBJECTION, CallState.WRAP_UP],
 
     # Terminal state
     CallState.WRAP_UP: [],
@@ -148,6 +176,28 @@ class CallContext:
     onboarding_mc_number: str = ""
     onboarding_completed: bool = False
 
+    # ── Outbound sales / SDR ──
+    lead_name: str = ""
+    lead_company: str = ""
+    lead_role: str = ""
+    lead_email: str = ""
+    lead_phone: str = ""
+    lead_problem: str = ""        # the pain the prospect actually described
+    lead_timeline: str = ""
+    lead_budget: str = ""
+    lead_qualified: bool = False
+    meeting_booked: bool = False
+    meeting_slot: str = ""
+    objections_raised: list[str] = field(default_factory=list)
+    ai_disclosed: bool = False    # set when the agent confirmed it is an AI
+
+    # Retrieval quality signals — surfaced live on the demo HUD, and the honest
+    # measure of whether the knowledge base is actually carrying the call.
+    kb_queries: int = 0
+    kb_misses: int = 0
+    kb_last_sources: list = field(default_factory=list)
+    kb_last_latency_ms: float = 0.0
+
     # Analytics
     states_visited: list[str] = field(default_factory=list)
     tools_invoked: list[str] = field(default_factory=list)
@@ -182,8 +232,17 @@ class CallStateMachine:
     Validates transitions and emits structured logs for analytics.
     """
 
-    def __init__(self, tenant_id: str = "", company_name: str = "", on_transition=None):
-        self._current_state = CallState.GREETING
+    def __init__(
+        self,
+        tenant_id: str = "",
+        company_name: str = "",
+        on_transition=None,
+        initial_state: CallState = CallState.GREETING,
+    ):
+        # `initial_state` selects the persona's entry point: GREETING for inbound
+        # dispatch, SALES_OPENING for the outbound SDR. The two graphs are
+        # disjoint, so the entry point determines which flow the call can reach.
+        self._current_state = initial_state
         self.context = CallContext(
             tenant_id=tenant_id,
             company_name=company_name,
@@ -192,7 +251,12 @@ class CallStateMachine:
         # successful transition — lets pipeline/hooks.py publish state changes to
         # Redis without monkeypatching the method (the old approach was broken).
         self.on_transition = on_transition
-        self.context.states_visited.append(CallState.GREETING.value)
+        self.context.states_visited.append(initial_state.value)
+        # The dispatch flow infers call_mode from the first transition out of
+        # GREETING (see `transition`). The sales flow has no such routing step —
+        # the persona is known at dial time — so stamp it here.
+        if initial_state == CallState.SALES_OPENING:
+            self.context.call_mode = "outbound_sales"
         logger.info(
             "Call state machine initialized",
             call_id=self.context.call_id,

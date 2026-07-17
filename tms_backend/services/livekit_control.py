@@ -59,6 +59,36 @@ def mint_room_token(
     )
 
 
+async def dispatch_agent(
+    *,
+    room_name: str,
+    metadata: dict,
+    agent_name: str = "nexus-agent",
+) -> dict:
+    """Dispatch an agent worker into a room without dialing anyone.
+
+    This is the web path: the browser joins the room itself, so there is no SIP
+    participant to create. `metadata` reaches the worker as `ctx.job.metadata` and
+    is how the caller selects persona, tenant knowledge base, and opening voice.
+    """
+    from livekit import api
+
+    lkapi = _client()
+    try:
+        await lkapi.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                agent_name=agent_name,
+                room=room_name,
+                metadata=json.dumps(metadata),
+            )
+        )
+        logger.info("Agent dispatched", room=room_name, agent=agent_name,
+                    profile=metadata.get("agent_profile"))
+        return {"room": room_name, "agent": agent_name}
+    finally:
+        await lkapi.aclose()
+
+
 async def place_outbound_call(
     *,
     sip_trunk_id: str,

@@ -44,10 +44,14 @@ export const config = {
     /*
      * Match all request paths except for the ones starting with:
      * - api (API routes)
+     * - demo (the public client-facing voice demo — must be reachable without a
+     *   login, since the whole point is handing a prospect a URL. It spawns agent
+     *   workers, so it is rate limited server-side in tms_backend/routers/demo.py
+     *   rather than by this middleware.)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico, sitemap.xml, robots.txt (metadata files)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)',
+    '/((?!api|demo|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)',
   ],
 };

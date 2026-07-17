@@ -3,9 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+.claude
 # Environments
 .env
 .venv
+.venv-dev
 env/
 venv/
 ENV/
@@ -18,3 +20,10 @@ venv.bak/
 
 # LiveKit
 *.log
+
+# Local-only compose overrides (host port remaps, dev tweaks)
+docker-compose.override.yml
+
+# RAG vector cache — a build artifact, rebuilt from the corpus by
+# 'python -m rag.ingest --tenant <id> --build-cache' or on first worker prewarm.
+nexus_agent/rag/corpus/.cache/

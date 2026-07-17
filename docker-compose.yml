@@ -51,6 +51,11 @@ services:
       - JWT_SECRET=${JWT_SECRET:-nexus_jwt_dev_secret_change_in_production}
       - NEXUS_SERVICE_KEY=${NEXUS_SERVICE_KEY:-nexus_dev_service_key_change_me}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
+      # The public /demo endpoint mints LiveKit tokens and dispatches agents.
+      - LIVEKIT_URL=${LIVEKIT_URL:-}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-}
+      - DEMO_TENANT_ID=${DEMO_TENANT_ID:-lumenia}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
@@ -80,6 +85,20 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Must match the backend's NEXUS_SERVICE_KEY so agent→backend calls authenticate.
       - NEXUS_SERVICE_KEY=${NEXUS_SERVICE_KEY:-nexus_dev_service_key_change_me}
+      # Optional TTS providers. An absent key just omits that provider's voices
+      # from the catalog — Deepgram alone is a complete configuration, and
+      # resolve_voice() falls back to it automatically.
+      - CARTESIA_API_KEY=${CARTESIA_API_KEY:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      # The independent fallback vendor. Without it, a Gemini rate limit mid-call
+      # has nowhere to fail over to and the agent goes silent.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      # Must match the Dockerfile, or the baked model cache is ignored and every
+      # worker re-downloads the embedding model on boot.
+      - HF_HOME=/opt/models
+      - FASTEMBED_CACHE_PATH=/opt/models/fastembed
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -93,10 +112,13 @@ services:
       resources:
         limits:
           cpus: "2.0"
-          memory: 1G
+          # Raised from 1G: each worker now holds three CPU models resident
+          # (Silero VAD, the semantic turn detector, and the bge-small embedding
+          # model) plus a per-tenant vector index.
+          memory: 2G
         reservations:
           cpus: "0.5"
-          memory: 256M
+          memory: 512M
     restart: unless-stopped
 
   # ── Premium Admin Dashboard (Next.js) ──
@@ -110,6 +132,14 @@ services:
       - /app/node_modules
       - /app/.next
     environment:
+      # Server-side only: where the Next.js server reaches the API. The browser
+      # never sees this — the demo page calls the same-origin /api/* path, which
+      # next.config.mjs rewrites here. That is what makes the page work over
+      # ngrok and from other devices, where a baked-in "localhost" cannot.
+      - BACKEND_INTERNAL_URL=http://tms-backend:8000
+      # Legacy: still inlined into the browser bundle for the older dashboard
+      # pages (src/lib/api.ts). Only valid on the Docker host itself. Do not use
+      # it for anything that must work from another device.
       - NEXT_PUBLIC_API_URL=http://localhost:8001
     depends_on:
       - tms-backend

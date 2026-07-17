@@ -60,7 +60,9 @@ class TestTenantConfig:
         config = TenantConfig(tenant_id="test", company_name="Test Co")
         assert config.tenant_id == "test"
         assert config.company_name == "Test Co"
-        assert config.voice_model == "aura-orion-en"  # Default
+        # Stale since the Aura-1 → Aura-2 upgrade: the field default has been
+        # "aura-2-apollo-en" while this still asserted the old Aura-1 name.
+        assert config.voice_model == "aura-2-apollo-en"  # Default
         assert config.negotiation_floor_pct == 0.90  # Default
 
     def test_full_config(self):

@@ -90,20 +90,34 @@ STT_CONFIDENCE_THRESHOLD = 0.55
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 
 
-def _verify_spoken(sentence: str, fsm) -> str:
+def _verify_spoken(sentence: str, fsm, telemetry=None, *, check_entities: bool = False) -> str:
     """Run the anti-hallucination verifier over one draft sentence, grounding it in
     the tools called this turn plus what the caller just said. Returns the
     (possibly redacted) text to actually synthesize."""
     sources = list(fsm.context.turn_facts) + [fsm.context.last_user_text]
-    result = verify_utterance(sentence, sources)
+    if check_entities:
+        # The agent's own company and name are always legitimate to say, even on a
+        # turn that called no tool. Without these the entity check flags the agent
+        # for introducing itself, which is absurd and would hedge every greeting.
+        sources.append(f"{fsm.context.company_name} {fsm.context.driver_name} {fsm.context.lead_name}")
+    result = verify_utterance(sentence, sources, check_entities=check_entities)
     if result.intervened:
         fsm.context.verifier_interventions += 1
         fsm.context.exception_score = max(fsm.context.exception_score, 0.6)
+        violations = [v.token for v in result.violations]
         logger.warning(
             "verifier_redacted_ungrounded_fact",
             call_id=fsm.context.call_id,
-            violations=[v.token for v in result.violations],
+            violations=violations,
         )
+        # Surface the catch live. An interception is the clearest possible
+        # evidence that the grounding guarantee is real and not a slide.
+        if telemetry is not None:
+            telemetry.publish({
+                "type": "verifier_intervention",
+                "violations": violations,
+                "total": fsm.context.verifier_interventions,
+            })
     return result.text
 
 
@@ -117,6 +131,12 @@ class NexusAgent(Agent):
 
     Every mode agent inherits these; individual agents only define their own tools.
     """
+
+    # Also flag capitalised entities absent from every grounded source. Off here:
+    # dispatch proper nouns are mostly cities and facility names the caller just
+    # supplied, so the false-positive cost outweighs the benefit. The sales
+    # persona overrides this to True — see state/sales_agents.py.
+    verify_entities: bool = False
 
     def _fsm(self):
         try:
@@ -161,6 +181,13 @@ class NexusAgent(Agent):
                 yield frame
             return
 
+        try:
+            telemetry = self.session.userdata.get("telemetry")
+        except Exception:
+            telemetry = None
+
+        check_entities = self.verify_entities
+
         async def _verified():
             buf = ""
             async for chunk in text:
@@ -170,9 +197,9 @@ class NexusAgent(Agent):
                     if not m:
                         break
                     sentence, buf = buf[: m.end()], buf[m.end():]
-                    yield _verify_spoken(sentence, fsm)
+                    yield _verify_spoken(sentence, fsm, telemetry, check_entities=check_entities)
             if buf.strip():
-                yield _verify_spoken(buf, fsm)
+                yield _verify_spoken(buf, fsm, telemetry, check_entities=check_entities)
 
         async for frame in Agent.default.tts_node(self, _verified(), model_settings):
             yield frame

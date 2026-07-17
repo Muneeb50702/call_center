@@ -10,7 +10,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db, close_db, async_session, TenantDB, LoadDB, DriverDB, RateDB, UserDB
-from routers import loads, rates, drivers, bookings, tenants, analytics_router, calls, detentions, documents
+from routers import (
+    loads, rates, drivers, bookings, tenants, analytics_router, calls,
+    detentions, documents, demo,
+)
 from routers.auth_router import router as auth_router
 
 
@@ -57,6 +60,9 @@ app.include_router(analytics_router.router)
 app.include_router(calls.router)
 app.include_router(detentions.router)
 app.include_router(documents.router)
+# Public — the client-facing voice demo. Unauthenticated by design; see
+# routers/demo.py for the rate limiting that keeps that safe.
+app.include_router(demo.router)
 from routers import websocket
 app.include_router(websocket.router)
 
