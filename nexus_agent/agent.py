@@ -20,6 +20,7 @@ across calls — loading them per call would charge every caller's first turn fo
 model initialisation.
 """
 
+import asyncio
 import json
 
 import structlog
@@ -436,12 +437,33 @@ async def run_agent(ctx: JobContext):
         except Exception as e:
             logger.warning("registry write failed", error=str(e))
 
-    await _register_call()
-    await reporter.register(
-        call_id,
-        caller_number=caller_number,
-        call_mode=state_machine.context.call_mode or ("outbound_sales" if is_sales else "load_booking"),
-        direction=direction,
+    # Bookkeeping only — Redis registry + the backend call record. Neither is
+    # needed before the agent speaks, and awaiting them serially put a Redis
+    # round-trip AND an HTTP POST between connect and the greeting. Fire them off
+    # and let them land while the opener plays.
+    _bg_tasks: set = set()
+
+    def _spawn(coro, label: str):
+        task = asyncio.create_task(coro)
+        _bg_tasks.add(task)  # hold a reference so it is not GC'd mid-flight
+        task.add_done_callback(_bg_tasks.discard)
+
+        def _log_failure(t):
+            if not t.cancelled() and t.exception():
+                logger.warning("background_task_failed", task=label, error=str(t.exception())[:120])
+
+        task.add_done_callback(_log_failure)
+        return task
+
+    _spawn(_register_call(), "register_call")
+    _spawn(
+        reporter.register(
+            call_id,
+            caller_number=caller_number,
+            call_mode=state_machine.context.call_mode or ("outbound_sales" if is_sales else "load_booking"),
+            direction=direction,
+        ),
+        "reporter_register",
     )
 
     # ── Shutdown: persist final record + clean up ──
@@ -516,11 +538,14 @@ async def run_agent(ctx: JobContext):
     else:
         first_agent = GreetingAgent(tenant_company=tenant.company_name)
 
-    # Warm the LLM's prompt-prefix cache before the greeting. Measured on
-    # gpt-4o-mini with this ~1,700-token prompt: 2442ms TTFT cold vs 852ms
-    # cached. Without this the agent's very first sentence — the one that decides
-    # whether a prospect stays on the line — is also its slowest.
-    await warm_prompt_cache(llm, first_agent.instructions)
+    # Warm the LLM's prompt-prefix cache — but do NOT block on it. It is a full
+    # LLM round trip (~1-2.5s), and awaiting it here sat that entire delay between
+    # the caller connecting and hearing a word.
+    #
+    # Backgrounding is safe because the opener is a FIXED audio/text line, not an
+    # LLM generation: the first real LLM call cannot happen until the prospect has
+    # listened to ~10s of opener and replied, by which time this has long finished.
+    _spawn(warm_prompt_cache(llm, first_agent.instructions), "warm_prompt_cache")
 
     await session.start(agent=first_agent, room=ctx.room)
     logger.info(
@@ -574,18 +599,67 @@ async def run_agent(ctx: JobContext):
         prospect = meta.get("prospect_name", "")
         greet = f" Greet them by name — they're called {prospect}." if prospect else ""
 
-        if campaign is not None:
-            # The opener lives next to the campaign it belongs to, so the two
-            # cannot drift apart (llm/campaigns.py).
-            instructions = opening_line(campaign, tenant.agent_name, tenant.company_name) + greet
-        else:
-            instructions = (
-                f"Open the call. Say you're {tenant.agent_name} from {tenant.company_name}, "
-                "that you're reaching out cold, give ONE specific reason you called "
-                "(search_knowledge_base first), and ask for a specific slice of time. "
-                f"Under ten seconds of speech.{greet}"
-            )
-        session.generate_reply(instructions=instructions)
+        # ── Fixed, pre-rendered opener ──
+        # The opener is DETERMINISTIC AUDIO, not an LLM-generated turn. This fixes
+        # two bugs at once:
+        #   1. Consistency — the greeting says the exact same words every call,
+        #      instead of the model improvising ("hi how are you") each time.
+        #   2. No hedge — model-generated turns pass through the grounding verifier,
+        #      and on the very first turn there are no grounded facts yet, so any
+        #      factual-looking phrase got replaced with "let me pull that up, one
+        #      moment". Supplying the audio to say() bypasses the verifier entirely,
+        #      because the verifier only inspects text the model itself produces.
+        # It renders on v3 (warm, emotional) and falls back to Flash (clean, fast)
+        # — never to LLM improvisation. See tts/expressive_opener.py.
+        spoke_fixed_opener = False
+        if campaign and campaign.v3_opener and tts.profile.provider == "elevenlabs":
+            try:
+                from tts.expressive_opener import pcm_to_frames, prerender_opener, strip_tags
+
+                opener_text = campaign.v3_opener.format(
+                    agent=tenant.agent_name, company=tenant.company_name
+                )
+                rendered = await prerender_opener(
+                    opener_text, tts.profile.voice, settings.elevenlabs_api_key
+                )
+                if rendered:
+                    pcm, model_used = rendered
+                    # The chat context gets the clean words (no [tags]) so the
+                    # model's memory of what it "said" reads naturally.
+                    await session.say(strip_tags(opener_text), audio=pcm_to_frames(pcm))
+                    spoke_fixed_opener = True
+                    telemetry.publish({"type": "expressive_opener", "model": model_used})
+                    logger.info("fixed_opener_played", call_id=call_id, model=model_used)
+            except Exception as e:
+                logger.warning("fixed_opener_failed", error=str(e))
+
+        if not spoke_fixed_opener:
+            # The normal path for any non-ElevenLabs voice (e.g. the Deepgram
+            # Orpheus default), and the safety net if a render failed. Speaks the
+            # SAME fixed line deterministically — never an LLM improvisation, so
+            # the greeting is identical every call.
+            #
+            # Its own words are seeded as grounded facts first: this line goes
+            # through TTS and therefore through the verifier, and without that
+            # seed the verifier would treat the company claim as unsourced and
+            # replace the greeting with "let me pull that up, one moment".
+            if campaign and campaign.v3_opener:
+                from tts.expressive_opener import strip_tags
+                fixed = strip_tags(campaign.v3_opener.format(
+                    agent=tenant.agent_name, company=tenant.company_name))
+                state_machine.add_turn_fact(fixed)
+                # Logged BEFORE the await: say() resolves only once playout
+                # finishes, so logging after it means the line never appears for
+                # a call that is still speaking (or for a headless test with no
+                # listener draining the track).
+                logger.info("fixed_opener_speaking", call_id=call_id, voice=tts.voice_id)
+                await session.say(fixed)
+            else:
+                session.generate_reply(instructions=(
+                    f"Open the call. Say you're {tenant.agent_name} from {tenant.company_name}, "
+                    "you're reaching out cold, give ONE reason you called, ask for a slice "
+                    f"of time. Under ten seconds.{greet}"
+                ))
     elif direction == "inbound":
         try:
             session.generate_reply(

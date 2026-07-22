@@ -47,6 +47,11 @@ class Campaign:
     proof_search: str            # the KB query that fetches relevant evidence
     close_target: str            # what "won" means on THIS call
     energy: str                  # delivery note for the opener
+    # The literal opening line, with ElevenLabs v3 Audio Tags. Pre-rendered on v3
+    # for a full-emotion first impression (tts/expressive_opener.py), then handoff
+    # to streaming Flash for the rest of the call. Fixed text — states no company
+    # fact that needs retrieval. {agent} and {company} are filled at render time.
+    v3_opener: str = ""
 
     def prompt_block(self) -> str:
         """Render the campaign as a prompt section."""
@@ -165,6 +170,29 @@ DIGITAL_MARKETING_AGENCY = Campaign(
         "  Match their energy DOWNWARD, never upward: if they are guarded, get\n"
         "  quieter and slower, not louder. Pushing energy at a guarded person is the\n"
         "  single clearest tell of a script."
+    ),
+    # The FIXED opening line. Rendered to audio up front (v3 for warmth, Flash if
+    # v3 is down) and played as the first utterance, so it is identical every call
+    # and never routes through the grounding verifier — that is what stops the
+    # "let me pull that up" hedge from ever landing on the greeting.
+    #
+    # ONE emotion tag, at the very start, on purpose. Multiple tags mid-line make
+    # v3 lurch between registers ("cheerful... then warm... then deep") which
+    # reads as erratic. A single opening [warmly] sets one consistent tone and
+    # lets the words carry the rest. Flash ignores the tag (it is stripped).
+    #
+    # Structure: who I am → own the cold call → the hook question → the ask.
+    # Kept tight — v3 speaks slowly, so this measures ~9-10s. Do not lengthen
+    # without re-checking the duration; a 19s opener (an earlier draft) is a
+    # Write "AI", never "A.I." — Deepgram Aura-2 reads the periods aloud, so the
+    # opener came out as "A dot I dot products", which instantly sounds synthetic.
+    # Plain "AI" is voiced correctly as the two letters.
+    v3_opener=(
+        "[warmly] Hey — I'm {agent}, calling from {company}. "
+        "I'll be straight with you, this is a cold call. "
+        "We build the AI products marketing agencies sell to their own clients — "
+        "the thing your clients keep asking you for. "
+        "Give me thirty seconds and you can decide if it's worth more?"
     ),
 )
 

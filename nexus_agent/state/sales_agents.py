@@ -57,7 +57,7 @@ def _persona(ctx: RunContext) -> dict:
     cfg = ctx.session.userdata.get("tenant_config", {})
     return {
         "company_name": cfg.get("company_name", "our company"),
-        "agent_name": cfg.get("agent_name", "William"),
+        "agent_name": cfg.get("agent_name", "Sarah"),
         "disclosure_mode": cfg.get("disclosure_mode", "if_asked"),
         "campaign_id": cfg.get("campaign_id", ""),
     }
@@ -197,7 +197,7 @@ class SalesAgent(NexusAgent):
 class SalesOpeningAgent(SalesAgent):
     """Earns the next thirty seconds, or gets off the call gracefully."""
 
-    def __init__(self, company_name: str = "Lumenia", agent_name: str = "William",
+    def __init__(self, company_name: str = "Lumenia", agent_name: str = "Sarah",
                  disclosure_mode: str = "if_asked", campaign_id: str = ""):
         super().__init__(instructions=get_sales_opening_prompt(company_name, agent_name, disclosure_mode, campaign_id))
 
@@ -217,7 +217,7 @@ class SalesOpeningAgent(SalesAgent):
 class DiscoveryAgent(SalesAgent):
     """Qualifies: is there a real problem worth solving here?"""
 
-    def __init__(self, company_name: str = "Lumenia", agent_name: str = "William",
+    def __init__(self, company_name: str = "Lumenia", agent_name: str = "Sarah",
                  disclosure_mode: str = "if_asked", campaign_id: str = ""):
         super().__init__(instructions=get_discovery_prompt(company_name, agent_name, disclosure_mode, campaign_id))
 
@@ -245,7 +245,7 @@ class DiscoveryAgent(SalesAgent):
 class PitchAgent(SalesAgent):
     """Connects their problem to something the company has verifiably built."""
 
-    def __init__(self, company_name: str = "Lumenia", agent_name: str = "William",
+    def __init__(self, company_name: str = "Lumenia", agent_name: str = "Sarah",
                  disclosure_mode: str = "if_asked", campaign_id: str = ""):
         super().__init__(instructions=get_pitch_prompt(company_name, agent_name, disclosure_mode, campaign_id))
 
@@ -273,7 +273,7 @@ class PitchAgent(SalesAgent):
 class ObjectionAgent(SalesAgent):
     """Understands the objection rather than beating it."""
 
-    def __init__(self, company_name: str = "Lumenia", agent_name: str = "William",
+    def __init__(self, company_name: str = "Lumenia", agent_name: str = "Sarah",
                  disclosure_mode: str = "if_asked", campaign_id: str = ""):
         super().__init__(instructions=get_objection_prompt(company_name, agent_name, disclosure_mode, campaign_id))
 
@@ -299,7 +299,7 @@ class ObjectionAgent(SalesAgent):
 class ClosingAgent(SalesAgent):
     """Books a conversation with a human. Not a deal — a conversation."""
 
-    def __init__(self, company_name: str = "Lumenia", agent_name: str = "William",
+    def __init__(self, company_name: str = "Lumenia", agent_name: str = "Sarah",
                  disclosure_mode: str = "if_asked", campaign_id: str = ""):
         super().__init__(instructions=get_closing_prompt(company_name, agent_name, disclosure_mode, campaign_id))
 
@@ -347,6 +347,6 @@ class ClosingAgent(SalesAgent):
 class SalesWrapUpAgent(SalesAgent):
     """Terminal. Says goodbye and stops."""
 
-    def __init__(self, company_name: str = "Lumenia", agent_name: str = "William",
+    def __init__(self, company_name: str = "Lumenia", agent_name: str = "Sarah",
                  disclosure_mode: str = "if_asked", campaign_id: str = ""):
         super().__init__(instructions=get_sales_wrap_up_prompt(company_name, agent_name, disclosure_mode, campaign_id))

@@ -15,6 +15,7 @@ truth (nexus_agent/tts/registry.py) rather than a copy in the backend that drift
 the first time someone adds a voice.
 """
 
+import asyncio
 import os
 import time
 import uuid
@@ -42,6 +43,11 @@ LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
 
 _RATE_KEY = "nexus:demo:rate:{ip}"
 _ACTIVE_KEY = "nexus:demo:active"
+
+# Strong references to in-flight agent dispatches. asyncio only holds weak
+# references to tasks, so without this a dispatch can be garbage collected
+# mid-flight and the agent silently never joins.
+_pending_dispatches: set = set()
 
 
 class DemoSessionRequest(BaseModel):
@@ -141,16 +147,43 @@ async def create_demo_session(payload: DemoSessionRequest, request: Request):
             dispatch_agent,
         )
 
-        await dispatch_agent(
-            room_name=room_name,
-            metadata={
-                "tenant_id": tenant_id,
-                "agent_profile": "sales",
-                "direction": "web_demo",
-                "voice_id": payload.voice_id,
-                "prospect_name": payload.prospect_name,
-            },
+        # Dispatch the agent WITHOUT blocking the token response.
+        #
+        # Awaiting it here cost ~2-3s (a LiveKit API round trip) before the
+        # browser was even handed a token, so agent-startup and browser-connect
+        # ran strictly one after the other. Firing it as a task lets them overlap:
+        # the browser starts joining the room while the worker is still being
+        # assigned, which is roughly a 2s saving on every session.
+        #
+        # Safe because the room is created by whoever arrives first — the agent
+        # joining an empty room and the visitor joining an agentless room are both
+        # normal transient states that resolve when the other side lands.
+        dispatch_task = asyncio.create_task(
+            dispatch_agent(
+                room_name=room_name,
+                metadata={
+                    "tenant_id": tenant_id,
+                    "agent_profile": "sales",
+                    "direction": "web_demo",
+                    "voice_id": payload.voice_id,
+                    "prospect_name": payload.prospect_name,
+                },
+            )
         )
+        _pending_dispatches.add(dispatch_task)
+        dispatch_task.add_done_callback(_pending_dispatches.discard)
+
+        def _log_dispatch(task):
+            if not task.cancelled() and task.exception():
+                # The visitor will sit in a silent room; surface it loudly here
+                # since there is no longer an exception path to the HTTP response.
+                logger.error(
+                    "demo_agent_dispatch_failed",
+                    room=room_name,
+                    error=str(task.exception())[:200],
+                )
+
+        dispatch_task.add_done_callback(_log_dispatch)
 
         token = (
             api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)

@@ -89,6 +89,83 @@ def _get_company(ctx: RunContext) -> str:
 STT_CONFIDENCE_THRESHOLD = 0.55
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 
+# ── Stage-direction leak guard ───────────────────────────────────────────────
+# Everything the LLM emits is spoken verbatim, so any markup it invents gets
+# PRONOUNCED. The prompt forbids all of this, but prompts are guidance and this
+# is a guarantee — a voice that says "warmly" or "asterisk smiles" mid-pitch ends
+# a client demo, so the text is scrubbed again on the way to the speaker.
+#
+# Covers every form observed or plausible:
+#   [warmly] [sighs]      square-bracket tags (ElevenLabs style)
+#   (energetic) (chuckles) parenthesised directions — ONLY when the whole
+#                          parenthetical is a short directive-looking phrase, so
+#                          real speech like "(about thirty of them)" survives
+#   *smiles* **bold**      asterisk roleplay and markdown emphasis
+#   "Tone:" "Agent:"       leading stage labels
+_BRACKET_TAG = re.compile(r"\[[^\]]{1,40}\]")
+
+# *smiles* — single asterisks are roleplay action, remove the whole thing.
+_ASTERISK_ACTION = re.compile(r"(?<!\*)\*(?!\*)[^*\n]{1,40}\*(?!\*)")
+# **Great** — double asterisks are markdown emphasis. Keep the WORD, drop the
+# markers. Deleting the word here silently ate real speech ("**Great** to hear."
+# became "to hear.").
+_ASTERISK_EMPHASIS = re.compile(r"\*\*([^*\n]{1,60})\*\*")
+
+# Parentheses and labels are matched against a WHITELIST of stage-direction
+# vocabulary, never by shape. A shape-based rule ("any short parenthetical") was
+# tried first and destroyed legitimate speech — "(thirty) agencies" became
+# "agencies" and "(depending on scope)" vanished. Over-stripping a real sentence
+# is worse than the leak it prevents, so precision wins over recall here: the
+# prompt is the primary defence, this is the backstop for the known forms.
+_DIRECTION_WORDS = (
+    r"energetic|enthusiastic|warmly|warm|friendly|cheerful|cheerfully|excited|"
+    r"calmly|calm|softly|soft|gently|firmly|confident|confidently|sincere|sincerely|"
+    r"sighs?|sighing|laughs?|laughing|chuckles?|chuckling|smiles?|smiling|"
+    r"pauses?|pausing|beat|breathes?|breathing|exhales?|inhales?|whispers?|whispering|"
+    r"thoughtfully|curious|curiously|surprised|serious|seriously|upbeat|"
+    r"tone|mood|delivery|voice|note|pace|emphasis"
+)
+_PAREN_DIRECTION = re.compile(rf"\(\s*(?:{_DIRECTION_WORDS})[^)]{{0,20}}\)", re.IGNORECASE)
+# A stage label at the start of a line: "Energetic:", "Tone:", "Agent:", "Sarah:".
+_STAGE_LABEL = re.compile(
+    rf"^\s*(?:{_DIRECTION_WORDS}|agent|assistant|sarah|william|aria|speaker)\s*:\s*",
+    re.IGNORECASE,
+)
+
+# Dotted acronyms: A.I. / A.P.I. / S.a.a.S — two or more single letters each
+# followed by a period. The trailing period is kept only when it ends a sentence
+# (handled by the replacement, which strips dots from the matched run only).
+_DOTTED_ACRONYM = re.compile(r"\b(?:[A-Za-z]\.){2,}")
+
+# Only ElevenLabs v3 performs square-bracket emotion tags. On v3 they are kept;
+# everywhere else they are removed along with the rest.
+_EMOTION_TAG = _BRACKET_TAG
+
+
+def scrub_for_speech(text: str, *, keep_bracket_tags: bool = False) -> str:
+    """Remove anything that would be pronounced as stage direction.
+
+    `keep_bracket_tags` is True only for ElevenLabs v3, which performs [sighs]
+    rather than reading it aloud.
+    """
+    out = text
+    if not keep_bracket_tags:
+        out = _BRACKET_TAG.sub("", out)
+    out = _ASTERISK_EMPHASIS.sub(r"\1", out)   # keep the emphasised word
+    out = _ASTERISK_ACTION.sub("", out)        # drop the roleplay action
+    out = _PAREN_DIRECTION.sub("", out)
+    # Dotted acronyms: "A.I." -> "AI". Deepgram pronounces the periods, so the
+    # agent said "A dot I dot products" — the single most robotic-sounding thing
+    # it could do. The prompt asks for "AI"; this guarantees it.
+    out = _DOTTED_ACRONYM.sub(lambda m: m.group(0).replace(".", ""), out)
+    # Stage labels LAST, and anchored to the line start: removing the tags above
+    # can promote a label into leading position ("*smiles* Tone: Hi" -> "Tone: Hi"),
+    # so checking for it first would miss exactly that case.
+    out = _STAGE_LABEL.sub("", out.lstrip())
+    # Tidy punctuation left stranded by a removal ("weeks ." -> "weeks.").
+    out = re.sub(r"\s+([.,!?])", r"\1", out)
+    return " ".join(out.split())
+
 
 def _verify_spoken(sentence: str, fsm, telemetry=None, *, check_entities: bool = False) -> str:
     """Run the anti-hallucination verifier over one draft sentence, grounding it in
@@ -112,11 +189,18 @@ def _verify_spoken(sentence: str, fsm, telemetry=None, *, check_entities: bool =
         )
         # Surface the catch live. An interception is the clearest possible
         # evidence that the grounding guarantee is real and not a slide.
+        #
+        # `spoken` is included because the transcript panel renders what the MODEL
+        # WROTE, while the speaker plays what the verifier ALLOWED. When they
+        # differ the demo looks broken — the agent visibly says one thing and
+        # audibly says another — so the page needs the redacted text to reconcile.
         if telemetry is not None:
             telemetry.publish({
                 "type": "verifier_intervention",
                 "violations": violations,
                 "total": fsm.context.verifier_interventions,
+                "drafted": sentence.strip(),
+                "spoken": result.text.strip(),
             })
     return result.text
 
@@ -188,6 +272,21 @@ class NexusAgent(Agent):
 
         check_entities = self.verify_entities
 
+        # Only ElevenLabs v3 performs inline emotion tags; every other engine
+        # speaks them as words. Decide ONCE per turn which behaviour applies.
+        supports_emotion_tags = False
+        try:
+            active = self.session.tts
+            model = getattr(getattr(active, "profile", None), "model", "") or ""
+            supports_emotion_tags = model == "eleven_v3"
+        except Exception:
+            pass
+
+        def _for_engine(sentence: str) -> str:
+            """Verify, then scrub anything the speaker would pronounce as markup."""
+            spoken = _verify_spoken(sentence, fsm, telemetry, check_entities=check_entities)
+            return scrub_for_speech(spoken, keep_bracket_tags=supports_emotion_tags)
+
         async def _verified():
             buf = ""
             async for chunk in text:
@@ -197,9 +296,13 @@ class NexusAgent(Agent):
                     if not m:
                         break
                     sentence, buf = buf[: m.end()], buf[m.end():]
-                    yield _verify_spoken(sentence, fsm, telemetry, check_entities=check_entities)
+                    out = _for_engine(sentence)
+                    if out:
+                        yield out
             if buf.strip():
-                yield _verify_spoken(buf, fsm, telemetry, check_entities=check_entities)
+                out = _for_engine(buf)
+                if out:
+                    yield out
 
         async for frame in Agent.default.tts_node(self, _verified(), model_settings):
             yield frame

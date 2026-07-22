@@ -154,3 +154,59 @@ def test_entity_checking_is_off_by_default():
 def test_dispatch_money_and_ids_still_blocked_without_entity_checking():
     assert verify_utterance("The rate is $2,300.", GROUNDED).intervened
     assert verify_utterance("That's load BK-99382.", GROUNDED).intervened
+
+
+# ── Tech vocabulary is not a client name ─────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "We offer a range of AI services, from AI-powered applications to consulting.",
+        "Our AI dashboards handle the client reporting automatically.",
+        "We build chatbots that qualify leads before your team sees them.",
+        "We work with digital marketing agencies across Canada and the US.",
+    ],
+)
+def test_generic_tech_vocabulary_is_not_hedged(utterance):
+    """Regression, observed live: "A.I" and "AI-powered" were flagged as invented
+    CLIENT NAMES on any turn with no tool call, so the agent audibly refused to
+    answer "what services do you provide?" and said "let me pull that up" instead.
+    The stopword list already had "AI" — the tokens (dotted, hyphenated) simply
+    never normalised to it."""
+    assert not _blocked(utterance)
+
+
+def test_brand_names_need_a_source():
+    """Brand names are NOT whitelisted, because one token carries two very
+    different claims — "we integrate Stripe" (fine) and "we've done work for
+    Shopify" (fabricated client) — and nothing in the token separates them."""
+    assert _blocked("We can integrate Stripe and QuickBooks for billing.")
+
+
+def test_brand_names_pass_once_the_knowledge_base_supplies_them():
+    """The normal path: the agent searches before claiming a capability, so the
+    tool output grounds the brand."""
+    grounded = GROUNDED + [
+        "Lumenia builds WhatsApp chatbots for lead qualification and integrates Stripe."
+    ]
+    result = verify_utterance(
+        "We build WhatsApp chatbots and can wire up Stripe.",
+        grounded,
+        check_entities=True,
+    )
+    assert not result.intervened
+
+
+def test_brand_the_caller_raised_is_grounded_by_their_own_words():
+    """When the prospect names a platform, echoing it back is legitimate — the
+    caller's utterance is part of the grounded set."""
+    grounded = GROUNDED + ["do you work with Shopify at all?"]
+    result = verify_utterance(
+        "Yeah, we work with Shopify.", grounded, check_entities=True
+    )
+    assert not result.intervened
+
+
+def test_fabricated_clients_are_still_blocked_after_the_stopword_expansion():
+    """The stopword additions must not have opened the hole they guard."""
+    assert _blocked("We did this for Maersk and DHL.")

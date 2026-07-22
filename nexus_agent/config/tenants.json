@@ -40,10 +40,15 @@
       "tenant_id": "lumenia",
       "company_name": "Lumenia",
       "agent_profile": "sales",
-      "agent_name": "William",
+      "_comment_agent_name": [
+        "Must match the GENDER of the default voice in tts/registry.py.",
+        "Currently Asteria (feminine) -> Sarah. A feminine voice introducing",
+        "itself with a masculine name is the first thing a prospect notices."
+      ],
+      "agent_name": "Sarah",
       "disclosure_mode": "if_asked",
       "_comment_campaign": [
-        "Pins the scenario: William is calling the founder of a DIGITAL MARKETING",
+        "Pins the scenario: Sarah is calling the founder of a DIGITAL MARKETING",
         "AGENCY to sell white-label AI products they can resell to their own",
         "clients. Every capability in the campaign is real and present in the",
         "corpus (chatbots, multi-tier reseller platform, multi-tenant SaaS,",
@@ -59,16 +64,17 @@
       "tms_api_url": "http://tms-backend:8000",
       "tms_api_key": "",
       "_comment_voice": [
-        "Empty = use the registry default, which prefers ElevenLabs Flash v2.5 and",
-        "falls back to Deepgram automatically when ELEVENLABS_API_KEY is absent.",
-        "The real voices are discovered from the ElevenLabs account at worker",
-        "startup, so pinning an id here would rot. Pick one live in the demo's",
-        "voice picker instead — switching takes effect on the next sentence."
+        "Empty = use the registry default, currently Deepgram Asteria (feminine,",
+        "American, clear/confident/energetic). Keep agent_name gender-matched to it.",
+        "Deepgram cannot perform ElevenLabs' [sighs]/[laughs] emotion tags, and",
+        "state/agents.py strips them before synthesis so they are never read aloud.",
+        "For emotional delivery, pick an 'ElevenLabs ... (v3)' voice in the demo's",
+        "picker — switching is live and takes effect on the next sentence."
       ],
       "voice_model": "",
       "custom_keywords": [
         "Lumenia",
-        "William",
+        "Sarah",
         "Lumenia Lab",
         "Umair",
         "Medaan",

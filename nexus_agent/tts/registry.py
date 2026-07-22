@@ -36,11 +36,22 @@ logger = structlog.get_logger()
 # stating it explicitly makes the invariant enforceable rather than incidental.
 SAMPLE_RATE = 24000
 
-# Sales default. resolve_voice() falls back automatically when ElevenLabs has no
-# key, so Deepgram remains a complete working configuration on its own.
-DEFAULT_VOICE_ID = "elevenlabs:hpp4J3VqNfWAUOO0d1Us"
-# Fallback when ElevenLabs is unavailable.
-DEEPGRAM_DEFAULT_VOICE_ID = "deepgram:aura-2-thalia-en"
+# Sales default: Asteria — FEMININE, American, "clear, confident, knowledgeable,
+# energetic". Chosen for consistency over theatrics.
+#
+# NOTE: this voice is feminine, so `agent_name` in config/tenants.json must be a
+# name that matches it. A voice that opens with "I'm William" in a woman's voice
+# is the first thing a prospect notices and it destroys the illusion instantly.
+# Keep the two in sync whenever either changes.
+#
+# Deepgram cannot perform ElevenLabs' inline emotion tags, so delivery here comes
+# from the writing rather than [sighs]/[laughs]; state/agents.py strips those tags
+# before synthesis so a non-v3 voice can never read them aloud. To get emotional
+# tags back, pick an "ElevenLabs ... (v3)" voice in the demo's picker — switching
+# is live and takes effect on the next sentence.
+DEFAULT_VOICE_ID = "deepgram:aura-2-asteria-en"
+# Fallback when the configured default is unavailable.
+DEEPGRAM_DEFAULT_VOICE_ID = "deepgram:aura-2-asteria-en"
 # The dispatch product shipped on Apollo; keep that the dispatch default so this
 # refactor does not silently change how existing tenants sound.
 DISPATCH_DEFAULT_VOICE_ID = "deepgram:aura-2-apollo-en"
@@ -183,6 +194,12 @@ _CARTESIA_SEED: tuple[VoiceProfile, ...] = (
 #   use_speaker_boost  Improves presence, small latency cost.
 ELEVEN_MODEL_REALTIME = "eleven_flash_v2_5"   # ~75ms, the realtime recommendation
 ELEVEN_MODEL_QUALITY = "eleven_turbo_v2_5"    # a little richer, still streams
+# v3 — the ONLY model that speaks inline emotional Audio Tags ([sighs], [laughs],
+# [warmly]) in a live call. It has no WebSocket (the official plugin gets a hard
+# 403), so it is driven over HTTP streaming by our own TTS in tts/eleven_v3.py.
+# Measured on the SAME transport, v3 costs ~125ms more than Flash — the "v3 can't
+# do realtime" received wisdom is really "v3 has no WebSocket".
+ELEVEN_MODEL_EXPRESSIVE = "eleven_v3"
 
 # Tuned for an energetic outbound opener.
 _ENERGETIC = (
@@ -200,6 +217,16 @@ _WARM = (
     ("speed", 1.0),
     ("use_speaker_boost", True),
 )
+# For v3. Closer to neutral ON PURPOSE: the emotion comes from the inline tags,
+# and stacking a low stability on top of them makes delivery wander mid-sentence.
+# Let the tags act; let the settings stay out of the way.
+_EXPRESSIVE = (
+    ("stability", 0.4),
+    ("similarity_boost", 0.75),
+    ("style", 0.35),
+    ("speed", 1.0),
+    ("use_speaker_boost", True),
+)
 
 # Only the plugin's own default voice is seeded. Real voices are discovered from
 # the account at startup (`discover_elevenlabs_voices`) because voice ids are
@@ -208,15 +235,17 @@ _ELEVENLABS_SEED: tuple[VoiceProfile, ...] = (
     VoiceProfile(
         voice_id=f"elevenlabs:{'hpp4J3VqNfWAUOO0d1Us'}",
         provider="elevenlabs",
-        model=ELEVEN_MODEL_REALTIME,
+        # v3 by default: it is the only model that performs inline [sighs] and
+        # [laughs] during a live call, which is the whole point of the demo.
+        model=ELEVEN_MODEL_EXPRESSIVE,
         voice="hpp4J3VqNfWAUOO0d1Us",
-        label="ElevenLabs Default",
+        label="ElevenLabs v3 (emotional)",
         gender="unknown",
         accent="American",
-        traits=("expressive", "natural", "energetic"),
-        blurb="ElevenLabs Flash v2.5 — the most natural voice in the stack.",
-        tags=("recommended", "expressive"),
-        settings=_ENERGETIC,
+        traits=("emotional", "natural", "expressive"),
+        blurb="ElevenLabs v3 — breathes, sighs and laughs mid-sentence.",
+        tags=("recommended", "emotional"),
+        settings=_EXPRESSIVE,
     ),
 )
 
@@ -344,9 +373,25 @@ def build_tts(voice_id: str = "", *, fallback: str = DEFAULT_VOICE_ID) -> tts_ba
         )
 
     if profile.provider == "elevenlabs":
-        from livekit.plugins import elevenlabs
-
         tuning = profile.settings_dict() or dict(_ENERGETIC)
+
+        if profile.model == ELEVEN_MODEL_EXPRESSIVE:
+            # v3 cannot use the official plugin (no WebSocket → 403), so it goes
+            # through our HTTP-streaming implementation. This is the path that
+            # gives inline [sighs]/[laughs] emotion during a live conversation.
+            from tts.eleven_v3 import create_v3_tts
+
+            return create_v3_tts(
+                api_key=os.getenv("ELEVENLABS_API_KEY", ""),
+                voice_id=profile.voice,
+                stability=tuning.get("stability", 0.4),
+                similarity_boost=tuning.get("similarity_boost", 0.75),
+                style=tuning.get("style", 0.35),
+                speed=tuning.get("speed", 1.0),
+                use_speaker_boost=tuning.get("use_speaker_boost", True),
+            )
+
+        from livekit.plugins import elevenlabs
         return elevenlabs.TTS(
             model=profile.model,
             voice_id=profile.voice,
@@ -525,7 +570,11 @@ async def discover_elevenlabs_voices(*, limit: int = 12) -> int:
         description = (voice.get("description") or labels.get("description") or "").strip()
 
         for model, suffix, tuning, tags in (
-            (ELEVEN_MODEL_REALTIME, "", _ENERGETIC, ("recommended", "expressive")),
+            # v3 first: it is the only one that speaks [sighs]/[laughs] inline, and
+            # it is the demo default. ~125ms slower than Flash on the same
+            # transport — worth it for a call that has to feel human.
+            (ELEVEN_MODEL_EXPRESSIVE, ":v3", _EXPRESSIVE, ("recommended", "emotional")),
+            (ELEVEN_MODEL_REALTIME, "", _ENERGETIC, ("fastest", "expressive")),
             (ELEVEN_MODEL_QUALITY, ":turbo", _WARM, ("expressive",)),
         ):
             register_voice(VoiceProfile(

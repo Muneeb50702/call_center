@@ -21,6 +21,8 @@ Verified against livekit-agents 1.6.5 event surface:
 import asyncio
 import json
 import os
+import re
+
 import structlog
 
 from livekit.agents import metrics as lk_metrics
@@ -29,6 +31,10 @@ from state.machine import CallStateMachine, CallState
 logger = structlog.get_logger()
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Inline ElevenLabs v3 emotion tags — [sighs], [warmly], [laughs]. The voice
+# performs these; they must never appear in a transcript shown to a human.
+_EMOTION_TAG_RE = re.compile(r"\[[^\]]{1,24}\]")
 
 
 def setup_hooks(
@@ -97,9 +103,16 @@ def setup_hooks(
         role = getattr(item, "role", None)
         text = getattr(item, "text_content", None) or ""
         if role == "assistant" and text.strip():
-            _publish({"type": "transcript", "speaker": "agent", "text": text})
+            # Strip inline emotion tags ([sighs], [warmly]) before display. The
+            # voice performs them; they are direction, not dialogue, and showing
+            # them in the live transcript looks like a bug to anyone watching.
+            display = _EMOTION_TAG_RE.sub("", text)
+            display = " ".join(display.split())
+            if not display:
+                return
+            _publish({"type": "transcript", "speaker": "agent", "text": display})
             if ctx is not None:
-                ctx.transcript.append({"speaker": "agent", "text": text})
+                ctx.transcript.append({"speaker": "agent", "text": display})
 
     # ── Latency / usage metrics ──
     @session.on("metrics_collected")

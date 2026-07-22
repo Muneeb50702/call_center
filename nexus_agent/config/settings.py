@@ -13,6 +13,7 @@ class NexusSettings(BaseSettings):
     gemini_api_key: str = ""
     openai_api_key: str = ""
     cartesia_api_key: str = ""
+    elevenlabs_api_key: str = ""
 
     # ── LLM provider ──
     # Which provider serves the primary LLM: "openai" | "gemini" | "groq".

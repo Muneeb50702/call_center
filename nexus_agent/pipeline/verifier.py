@@ -127,14 +127,55 @@ _ENTITY_STOPWORDS = frozenset(
     Asia Asian Africa German France French Spain Spanish Mexico Dutch Italy
     Italian China Chinese Japan Japanese Toronto Vancouver Montreal London
     Dubai Karachi Islamabad York Francisco Angeles Texas California Florida
+
+    Chatbot Chatbots Automation Automations Agent Agents Dashboard
+    Dashboards Platform Platforms Integration Integrations Analytics Workflow
+    Workflows Machine Learning Generative Model Models Bot Bots Voice Data
+    Cloud Software Web Mobile App Apps Website Websites Ecommerce Marketing
     """.split()
 )
+# The technology block above is generic VOCABULARY — "AI", "chatbot",
+# "dashboard", "workflow". A sales agent for an AI company says these constantly
+# and not one of them can be a client name, so listing them stops the
+# invented-client rule from hedging an ordinary answer.
+#
+# BRAND names (Stripe, Shopify, WhatsApp, Google) are deliberately NOT listed,
+# even though that means "we integrate Stripe" needs grounding. The same token
+# carries two very different claims:
+#
+#     "we can integrate Stripe"     legitimate capability
+#     "we've done work for Shopify" a fabricated client
+#
+# Nothing in the token distinguishes them, so the safe default is to require a
+# source — and in practice one is almost always present: the tool output when the
+# agent searched the knowledge base first (which the prompt demands before any
+# capability claim), or the caller's own words, which are part of the grounded
+# set. A brand the agent raises with neither behind it is exactly the case worth
+# stopping.
 # Geography is stoplisted deliberately. Countries and demonyms are high-frequency
 # and low-risk — the lie a sales agent tells is "we built this for Maersk", never
 # "we work in Canada". They also collide constantly: a source saying "Canadian
 # carrier" does not contain the substring "canada", so every mention of the
 # country got hedged. Cities not listed here still have to be grounded, which is
 # fine because the KB names the ones that matter.
+
+
+def _normalize_entity(token: str) -> str:
+    """Reduce a capitalised token to the form the stopword list is keyed on.
+
+    Acronyms and compounds arrive in shapes the raw token never matches:
+        "A.I"          -> "ai"          (internal dots)
+        "AI-powered"   -> "ai"          (hyphenated compound: judge the head)
+        "SaaS."        -> "saas"        (trailing punctuation)
+
+    Without this, "A.I" and "AI-powered" were both flagged as invented CLIENT
+    NAMES on any turn that made no tool call, and the verifier replaced the whole
+    sentence with the "let me pull that up" hedge — so the agent audibly refused
+    to answer "what services do you provide?". The stopword list already had
+    "AI"; the tokens simply never matched it.
+    """
+    head = token.split("-", 1)[0]          # "AI-powered" -> "AI"
+    return head.replace(".", "").strip().lower()
 
 
 def _entity_candidates(sentence: str) -> list[str]:
@@ -146,7 +187,11 @@ def _entity_candidates(sentence: str) -> list[str]:
     # Drop the first word: capitalisation at a sentence start means nothing.
     if stripped and tokens and stripped.startswith(tokens[0]):
         tokens = tokens[1:]
-    return [t for t in tokens if t.lower() not in _ENTITY_STOPWORDS]
+    return [
+        t for t in tokens
+        if t.lower() not in _ENTITY_STOPWORDS
+        and _normalize_entity(t) not in _ENTITY_STOPWORDS
+    ]
 
 # Sentence splitter (keeps it simple — split on . ! ? followed by space/EOL).
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
