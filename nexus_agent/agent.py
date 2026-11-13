@@ -22,6 +22,7 @@ model initialisation.
 
 import asyncio
 import json
+import os
 
 import structlog
 from livekit.agents import AgentSession, AutoSubscribe, JobContext, JobProcess
@@ -197,6 +198,41 @@ async def _resolve_tenant(ctx: JobContext, meta: dict) -> TenantConfig:
 
 # ── Pipeline construction ─────────────────────────────────────────────────────
 
+def _build_stt(tenant: TenantConfig, *, is_sales: bool, vad):
+    """Deepgram by default; Fish Audio when FISH_STT is set AND actually usable.
+
+    Fish ASR is opt-in for two independent reasons, either of which is enough to
+    keep it off a live call:
+
+    - It needs paid API credit (billed separately from platform credit; there is
+      no free tier for ASR the way `s2.1-pro-free` covers TTS). `probe()` checks
+      this once, here, so a 402 costs one log line at startup instead of failing
+      every caller utterance.
+    - It is batch, not streaming — no interim transcripts. The semantic turn
+      detector and preemptive generation both read transcript text before a turn
+      is final, so on Fish they go quiet and turn latency rises by roughly the
+      trailing silence VAD needs. See stt/fish_stt.py.
+
+    Falling back rather than raising is deliberate: a misconfigured STT should
+    degrade the demo's vendor story, not take the call down.
+    """
+    from stt import fish_stt
+
+    if fish_stt.enabled():
+        api_key = os.getenv("FISH_API_KEY", "")
+        usable, reason = fish_stt.probe(api_key)
+        if usable:
+            logger.info("stt_provider_selected", provider="fish",
+                        note="batch ASR — no interim transcripts")
+            return fish_stt.create_stt(vad=vad)
+        logger.warning("fish_stt_unavailable", reason=reason, falling_back_to="deepgram")
+
+    return create_stt(
+        extra_keywords=tenant.custom_keywords,
+        profile="sales" if is_sales else "dispatch",
+    )
+
+
 def _build_llm(tenant: TenantConfig):
     """Primary LLM plus a different-vendor fallback. See llm/factory.py — it
     health-checks providers and enforces Gemini's minimum request deadline, both
@@ -286,16 +322,15 @@ async def run_agent(ctx: JobContext):
 
     # ── Pipeline ──
     llm = _build_llm(tenant)
-    stt = create_stt(
-        extra_keywords=tenant.custom_keywords,
-        profile="sales" if is_sales else "dispatch",
-    )
+    # VAD first: Fish STT is batch, not streaming, so it needs local VAD to know
+    # where one utterance ends. Deepgram does its own endpointing and ignores it.
+    vad = ctx.proc.userdata.get("vad") or create_vad()
+    stt = _build_stt(tenant, is_sales=is_sales, vad=vad)
     # The demo page may override the tenant's configured voice per session.
     tts = SwitchableTTS(
         meta.get("voice_id") or tenant.voice_model,
         fallback=DEFAULT_VOICE_ID if is_sales else DISPATCH_DEFAULT_VOICE_ID,
     )
-    vad = ctx.proc.userdata.get("vad") or create_vad()
     turn_detection = _build_turn_detection()
 
     # ── Per-call state ──
@@ -306,7 +341,23 @@ async def run_agent(ctx: JobContext):
         initial_state=initial_state,
     )
     state_machine.context.direction = direction
-    state_machine.context.campaign_id = meta.get("campaign_id", "")
+    # Resolve the campaign the SAME way the opener does (tenant config, with a
+    # per-session override from the demo page) so the prompt, the opener and the
+    # grounding cannot end up describing three different campaigns.
+    state_machine.context.campaign_id = (
+        meta.get("campaign_id") or getattr(tenant, "campaign_id", "") or ""
+    )
+    # Seed the campaign's pre-verified proof as standing grounding. Without this
+    # the pre-TTS verifier would redact the agent's own case study — the facts
+    # are in the prompt, but the verifier only trusts tool output, so the pitch
+    # would be silently gutted mid-sentence. See llm/campaigns.preloaded_facts.
+    from llm.campaigns import get_campaign as _get_campaign
+
+    _campaign = _get_campaign(state_machine.context.campaign_id)
+    if _campaign is not None and _campaign.preloaded_facts:
+        state_machine.context.standing_facts = list(_campaign.preloaded_facts)
+        logger.info("standing_facts_loaded", campaign=_campaign.campaign_id,
+                    count=len(_campaign.preloaded_facts))
     call_id = state_machine.context.call_id
     caller_number = _extract_caller_number(ctx)
 
@@ -645,8 +696,19 @@ async def run_agent(ctx: JobContext):
             # replace the greeting with "let me pull that up, one moment".
             if campaign and campaign.v3_opener:
                 from tts.expressive_opener import strip_tags
-                fixed = strip_tags(campaign.v3_opener.format(
-                    agent=tenant.agent_name, company=tenant.company_name))
+                raw = campaign.v3_opener.format(
+                    agent=tenant.agent_name, company=tenant.company_name)
+                # Keep the [warmly]/[break] markers when the live voice performs
+                # them. Stripping unconditionally threw away the delivery the
+                # opener was written for on Fish — which is now the sales default,
+                # so this was every sales call. Engines that would pronounce the
+                # markers still get them removed.
+                fixed = raw if tts.profile.supports_emotion_tags else strip_tags(raw)
+                # Seed BOTH forms as grounded. The verifier compares against the
+                # spoken text, and a marker-bearing string would not match the
+                # stripped one, so seeding only one form lets the verifier redact
+                # the greeting on exactly one of the two paths.
+                state_machine.add_turn_fact(strip_tags(raw))
                 state_machine.add_turn_fact(fixed)
                 # Logged BEFORE the await: say() resolves only once playout
                 # finishes, so logging after it means the line never appears for

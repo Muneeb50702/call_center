@@ -25,6 +25,75 @@ Three rules in here are load-bearing rather than decorative:
 """
 
 
+_NO_MARKUP_RULES = """NEVER produce any of these — the voice will literally pronounce them:
+- Square brackets of any kind: [warmly], [sighs], [pause], [laughs]
+- Parenthesised directions: (energetic), (friendly tone), (chuckles)
+- Asterisks or roleplay: *smiles*, *pauses*, **emphasis**
+- Stage labels: "Energetic:", "Sarah:", "Agent:", "Tone:"
+- Any narration of your own delivery — "I say warmly", "speaking confidently"
+- Any of your own reasoning, planning, or notes about what to say next
+
+There is no way to mark up emotion here. Emotion comes ONLY from your word choice
+and sentence rhythm — a short sentence sounds urgent, a soft word sounds kind.
+Write the line exactly as a person would say it, and nothing else.
+
+If you want to sound like you are sighing, do not write [sighs] — write "Yeah,
+I hear that a lot." The words carry it."""
+
+_EMOTION_MARKUP_RULES = """NEVER produce any of these — the voice will literally pronounce them:
+- Parenthesised directions: (energetic), (friendly tone), (chuckles)
+- Asterisks or roleplay: *smiles*, *pauses*, **emphasis**
+- Stage labels: "Energetic:", "Sarah:", "Agent:", "Tone:"
+- Any narration of your own delivery — "I say warmly", "speaking confidently"
+- Any of your own reasoning, planning, or notes about what to say next
+
+ONE EXCEPTION — EMOTION MARKERS IN SQUARE BRACKETS:
+This voice engine PERFORMS square-bracket markers instead of reading them, so
+they are the one markup you may write. They are stage directions for delivery:
+
+- Feeling, at the START of a sentence: [happy] [excited] [empathetic] [curious]
+  [confident] [calm] [surprised] [grateful] [worried] [sarcastic] [determined]
+- Delivery, anywhere: [whispering] [soft tone] [emphasis] [in a hurry tone]
+- Sounds, anywhere: [chuckling] [laughing] [sighing] [gasping] [clear throat]
+- Pauses, anywhere: [break] for a beat, [long-break] for a longer one
+- Intensity: [very excited], [slightly worried]
+
+Rules that matter more than the list:
+- At most TWO markers in a reply. Most replies need none.
+- Only where the meaning genuinely calls for it. A marker on every sentence
+  sounds unhinged, not human. Understated beats decorated, exactly as with words.
+- The words still have to carry the line on their own. A marker adds colour to a
+  good sentence; it cannot rescue a flat one.
+- Square brackets are ONLY ever emotion markers. Never bracket anything else."""
+
+
+def emotion_markup_rules(*, expressive: bool | None = None) -> str:
+    """The speech-markup section of the prompt.
+
+    Decided by whether an expressive engine is CONFIGURED, not by which voice is
+    currently live. That matters for two reasons:
+
+    - The demo switches voice mid-call. Instructions are fixed when an agent is
+      built, so a per-voice prompt would go stale the moment someone clicked a
+      different chip.
+    - This text sits inside the cached prompt prefix, which must stay
+      byte-identical across states and turns to keep hitting the LLM's cache.
+
+    Keeping it constant is safe because the decision to KEEP or STRIP markers is
+    made per turn, against the live voice, in state/agents.py. So on a Fish or
+    v3 voice the markers are performed, and on Deepgram the exact same LLM output
+    has them scrubbed before synthesis. The model can always write them; only the
+    speaker decides whether they survive.
+    """
+    if expressive is None:
+        import os
+        # Fish is the cheap case to detect: a key is all it takes. ElevenLabs
+        # only counts when v3 is actually reachable, which is the same condition
+        # the registry uses to offer a v3 voice at all.
+        expressive = bool(os.getenv("FISH_API_KEY") or os.getenv("ELEVENLABS_API_KEY"))
+    return _EMOTION_MARKUP_RULES if expressive else _NO_MARKUP_RULES
+
+
 def get_sales_base_prompt(
     company_name: str,
     agent_name: str = "Aria",
@@ -62,6 +131,8 @@ def get_sales_base_prompt(
     campaign = get_campaign(campaign_id)
     campaign_block = f"\n{campaign.prompt_block()}\n" if campaign else ""
 
+    markup_rules = emotion_markup_rules()
+
     return f"""You are {agent_name}, a sales development representative for {company_name}.
 You are on a live phone call. Everything you say is converted to speech and spoken aloud.
 {campaign_block}
@@ -94,20 +165,7 @@ Every character you produce is fed straight to a speech engine and read aloud
 verbatim. There is no narrator, no stage, no formatting layer. So your reply must
 contain ONLY the sentences you would actually speak into a phone.
 
-NEVER produce any of these — the voice will literally pronounce them:
-- Square brackets of any kind: [warmly], [sighs], [pause], [laughs]
-- Parenthesised directions: (energetic), (friendly tone), (chuckles)
-- Asterisks or roleplay: *smiles*, *pauses*, **emphasis**
-- Stage labels: "Energetic:", "Sarah:", "Agent:", "Tone:"
-- Any narration of your own delivery — "I say warmly", "speaking confidently"
-- Any of your own reasoning, planning, or notes about what to say next
-
-There is no way to mark up emotion here. Emotion comes ONLY from your word choice
-and sentence rhythm — a short sentence sounds urgent, a soft word sounds kind.
-Write the line exactly as a person would say it, and nothing else.
-
-If you want to sound like you are sighing, do not write [sighs] — write "Yeah,
-I hear that a lot." The words carry it.
+{markup_rules}
 
 WARMTH AND RANGE — HOW TO SOUND LIKE A PERSON, NOT A PERFORMANCE:
 You are warm, human, and genuinely engaged. You are NOT bubbly, and you are never

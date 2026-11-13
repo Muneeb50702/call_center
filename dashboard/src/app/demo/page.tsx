@@ -331,7 +331,17 @@ export default function DemoPage() {
                 disabled={s.switching}
                 title={v.blurb}
               >
-                <span className={styles.voiceName}>{v.label}</span>
+                <span className={styles.voiceName}>
+                  {v.label}
+                  {/* The transcript shows the markers the model wrote; this says
+                      whether this voice will actually act them or have them
+                      stripped before it speaks. */}
+                  {v.supports_emotion_tags && (
+                    <span className={styles.voiceEmotive} title="Performs inline emotion markers like [excited] and [sighing]">
+                      ♪
+                    </span>
+                  )}
+                </span>
                 <span className={styles.voiceMeta}>
                   {v.gender === 'feminine' ? 'F' : v.gender === 'masculine' ? 'M' : '—'} ·{' '}
                   {v.accent}

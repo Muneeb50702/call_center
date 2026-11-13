@@ -214,6 +214,17 @@ class CallContext:
     # verifier (pipeline/verifier.py) checks that every critical fact the agent
     # is about to speak is grounded in one of these strings. Reset each turn.
     turn_facts: list[str] = field(default_factory=list)
+    # Campaign proof the agent is allowed to state WITHOUT a lookup, because it
+    # was already verified against the corpus when the campaign was written (see
+    # llm/campaigns.py `preloaded_facts`). Unlike turn_facts these survive
+    # reset_turn_facts, so they ground every turn of the call.
+    #
+    # This exists to kill the "let me pull that up" hedge. Requiring a tool call
+    # before the agent may say what it does meant the model narrated the wait on
+    # its own opening pitch, which is the single most amateur thing a cold caller
+    # can do — a good rep already knows their own case studies. Discovery-driven
+    # facts still go through search_knowledge_base; only the pitch is preloaded.
+    standing_facts: list[str] = field(default_factory=list)
     last_user_text: str = ""          # most recent final user transcript (a grounding source)
     stt_confidence_low: bool = False
     sentiment: str = "neutral"        # neutral | positive | negative

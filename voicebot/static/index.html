@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fish Audio Voice Bot</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --line: #2a323d;
+    --text: #e6eaef; --dim: #8e9aa8; --accent: #4fd1c5; --user: #2b3a4a;
+    --danger: #f87171;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6f8; --panel: #ffffff; --panel2: #eef1f5; --line: #d9dee5;
+      --text: #1a1f26; --dim: #5c6875; --accent: #0d9488; --user: #dce9f5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    padding: 12px 18px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--panel);
+  }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .pipe { color: var(--dim); font-size: 12px; font-family: ui-monospace, monospace; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #chat {
+    flex: 1; overflow-y: auto; padding: 18px; display: flex;
+    flex-direction: column; gap: 12px;
+  }
+  aside {
+    width: 290px; border-left: 1px solid var(--line); background: var(--panel);
+    padding: 16px; overflow-y: auto; flex-shrink: 0;
+  }
+  aside h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 0 0 8px;
+  }
+  aside section { margin-bottom: 22px; }
+  .msg { max-width: 74%; padding: 10px 13px; border-radius: 12px; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--user); }
+  .msg.bot  { align-self: flex-start; background: var(--panel2); }
+  .msg.err  { align-self: center; background: transparent; color: var(--danger);
+              font-size: 13px; max-width: 90%; text-align: center; }
+  .meta { font-size: 11px; color: var(--dim); margin-top: 6px;
+          font-family: ui-monospace, monospace; }
+  .empty { color: var(--dim); text-align: center; margin: auto; max-width: 34ch; }
+  footer {
+    border-top: 1px solid var(--line); padding: 12px 18px; background: var(--panel);
+    display: flex; gap: 10px; align-items: center;
+  }
+  input[type=text], select {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 12px; font: inherit; width: 100%;
+  }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 15px; font: inherit; cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #06231f; border-color: var(--accent);
+                   font-weight: 600; }
+  button.rec { background: var(--danger); border-color: var(--danger); color: #2b0a0a;
+               font-weight: 600; }
+  label.row { display: flex; justify-content: space-between; font-size: 12px;
+              color: var(--dim); margin-bottom: 5px; }
+  .sample { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+            border-bottom: 1px solid var(--line); font-size: 13px; }
+  .sample button { padding: 3px 9px; font-size: 12px; }
+  .sample span { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                 white-space: nowrap; }
+  .sample small { color: var(--dim); font-size: 11px; }
+  #status { font-size: 12px; color: var(--dim); min-height: 16px;
+            font-family: ui-monospace, monospace; }
+  .warn { background: #7f1d1d; color: #fee; padding: 8px 12px; border-radius: 8px;
+          font-size: 13px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Fish Audio Voice Bot</h1>
+  <span class="pipe" id="pipeline">loading…</span>
+  <span style="flex:1"></span>
+  <button id="clear">Clear chat</button>
+</header>
+
+<main>
+  <div id="chat"><div class="empty" id="empty">
+    Hold <b>Talk</b> and ask anything, or type below.<br><br>
+    It's a general-purpose assistant — questions, explanations,
+    writing, code, math, planning.
+  </div></div>
+
+  <aside>
+    <div id="warn"></div>
+
+    <section>
+      <h2>Voice</h2>
+      <select id="voice"></select>
+      <label class="row" style="margin-top:12px">
+        <span>Speed</span><span id="speedVal">1.0×</span>
+      </label>
+      <input type="range" id="speed" min="0.6" max="1.6" step="0.05" value="1"
+             style="width:100%">
+      <label class="row" style="margin-top:12px">
+        <span><input type="checkbox" id="autoplay" checked> Speak replies</span>
+      </label>
+    </section>
+
+    <section>
+      <h2>Voice samples</h2>
+      <div id="samples"></div>
+      <p style="font-size:12px;color:var(--dim)">
+        Same line in every voice. Regenerate with
+        <code>collect_samples.py</code>.
+      </p>
+    </section>
+
+    <section>
+      <h2>Find more voices</h2>
+      <input type="text" id="vq" placeholder="e.g. calm, narrator, french">
+      <button id="vsearch" style="margin-top:8px;width:100%">Search library</button>
+      <div id="vresults" style="margin-top:8px"></div>
+    </section>
+  </aside>
+</main>
+
+<footer>
+  <button id="talk" class="primary">🎙 Talk</button>
+  <input type="text" id="text" placeholder="…or type a question and press Enter">
+  <button id="send">Send</button>
+</footer>
+<div style="padding:6px 18px;background:var(--panel)"><span id="status"></span></div>
+
+<audio id="player"></audio>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let CFG = null, SESSION = null, recorder = null, chunks = [], recording = false;
+
+const setStatus = (s) => { $("status").textContent = s; };
+
+function bubble(cls, text, meta) {
+  $("empty")?.remove();
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.textContent = text;
+  if (meta) {
+    const m = document.createElement("div");
+    m.className = "meta";
+    m.textContent = meta;
+    d.appendChild(m);
+  }
+  $("chat").appendChild(d);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return d;
+}
+
+async function boot() {
+  CFG = await (await fetch("/api/config")).json();
+  SESSION = CFG.session;
+  $("pipeline").textContent =
+    `${CFG.stt_model} → ${CFG.llm_model} → fish ${CFG.tts_model}`;
+
+  if (CFG.missing_keys.length) {
+    $("warn").innerHTML =
+      `<div class="warn">Missing in .env: ${CFG.missing_keys.join(", ")}</div>`;
+  }
+
+  // Voice picker + sample list, both from the generated manifest.
+  const sel = $("voice");
+  sel.innerHTML = `<option value="">Default (s2.1-pro-free)</option>`;
+  const box = $("samples");
+  box.innerHTML = "";
+  for (const s of CFG.samples) {
+    if (s.voice_id) {
+      const o = document.createElement("option");
+      o.value = s.voice_id;
+      o.textContent = `${s.label} — ${s.title}`;
+      sel.appendChild(o);
+    }
+    const row = document.createElement("div");
+    row.className = "sample";
+    const play = document.createElement("button");
+    play.textContent = "▶";
+    play.onclick = () => { $("player").src = "/samples/" + s.file;
+                           $("player").play(); };
+    const name = document.createElement("span");
+    name.innerHTML = `${s.label}<br><small>${s.title}</small>`;
+    const use = document.createElement("button");
+    use.textContent = "use";
+    use.onclick = () => { sel.value = s.voice_id || "";
+                          setStatus("voice set to " + s.label); };
+    row.append(play, name, use);
+    box.appendChild(row);
+  }
+  if (!CFG.samples.length) {
+    box.innerHTML = `<p style="font-size:12px;color:var(--dim)">
+      None yet — run <code>python voicebot/collect_samples.py</code></p>`;
+  }
+}
+
+// ---- one turn -------------------------------------------------------------
+async function turn(form) {
+  $("talk").disabled = $("send").disabled = true;
+  setStatus("thinking…");
+  try {
+    const t0 = performance.now();
+    const r = await fetch("/api/ask", { method: "POST", body: form });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+
+    if (!d.transcript) { setStatus(d.note || "nothing heard"); return; }
+    bubble("user", d.transcript, d.timings.stt ? `stt ${d.timings.stt}s` : null);
+    const parts = [];
+    if (d.timings.stt) parts.push(`stt ${d.timings.stt}s`);
+    if (d.timings.llm) parts.push(`llm ${d.timings.llm}s`);
+    const node = bubble("bot", d.reply, parts.join("  ·  "));
+
+    if ($("autoplay").checked) await speak(d.reply, node, t0);
+    else setStatus(`replied in ${((performance.now() - t0) / 1000).toFixed(2)}s`);
+  } catch (e) {
+    bubble("err", "⚠ " + e.message);
+    setStatus("failed");
+  } finally {
+    $("talk").disabled = $("send").disabled = false;
+  }
+}
+
+async function speak(text, node, t0) {
+  setStatus("synthesizing voice…");
+  const r = await fetch("/api/speak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice_id: $("voice").value,
+                           speed: parseFloat($("speed").value) }),
+  });
+  if (!r.ok) {
+    setStatus("tts failed: " + ((await r.json()).detail || r.statusText));
+    return;
+  }
+  const secs = r.headers.get("X-TTS-Seconds");
+  const gen = r.headers.get("X-TTS-Elapsed");
+  const blob = await r.blob();
+  $("player").src = URL.createObjectURL(blob);
+  await $("player").play().catch(() => setStatus("click anywhere, then retry — "
+    + "the browser blocked autoplay"));
+  const total = ((performance.now() - t0) / 1000).toFixed(2);
+  node.querySelector(".meta").textContent +=
+    `  ·  tts ${gen}s  ·  ${secs}s audio  ·  total ${total}s`;
+  setStatus(`spoke ${secs}s of audio — first word ${total}s after you finished`);
+}
+
+// ---- mic ------------------------------------------------------------------
+async function startRec() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    bubble("err", "⚠ mic blocked. Allow microphone access, and note that "
+      + "browsers only permit it on localhost or https.");
+    return;
+  }
+  chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const blob = new Blob(chunks, { type: recorder.mimeType });
+    if (blob.size < 1200) { setStatus("too short — hold the button while talking"); return; }
+    const f = new FormData();
+    f.append("session", SESSION);
+    f.append("audio", blob, "turn.webm");
+    turn(f);
+  };
+  recorder.start();
+  recording = true;
+  $("talk").classList.add("rec");
+  $("talk").textContent = "■ Stop";
+  setStatus("listening…");
+}
+
+function stopRec() {
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+  recording = false;
+  $("talk").classList.remove("rec");
+  $("talk").textContent = "🎙 Talk";
+}
+
+// ---- wiring --------------------------------------------------------------
+$("talk").onclick = () => (recording ? stopRec() : startRec());
+
+function sendText() {
+  const t = $("text").value.trim();
+  if (!t) return;
+  $("text").value = "";
+  const f = new FormData();
+  f.append("session", SESSION);
+  f.append("text", t);
+  turn(f);
+}
+$("send").onclick = sendText;
+$("text").onkeydown = (e) => { if (e.key === "Enter") sendText(); };
+
+$("speed").oninput = (e) => { $("speedVal").textContent =
+  parseFloat(e.target.value).toFixed(2) + "×"; };
+
+$("clear").onclick = async () => {
+  await fetch("/api/reset", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session: SESSION }) });
+  $("chat").innerHTML = "";
+  setStatus("chat cleared");
+};
+
+$("vsearch").onclick = async () => {
+  const q = $("vq").value.trim();
+  setStatus("searching voices…");
+  const r = await fetch(`/api/voices?q=${encodeURIComponent(q)}&limit=12`);
+  const { voices } = await r.json();
+  const out = $("vresults");
+  out.innerHTML = "";
+  for (const v of voices) {
+    const row = document.createElement("div");
+    row.className = "sample";
+    const name = document.createElement("span");
+    name.textContent = v.title;
+    const use = document.createElement("button");
+    use.textContent = "use";
+    use.onclick = () => {
+      let o = [...$("voice").options].find((x) => x.value === v.id);
+      if (!o) { o = document.createElement("option"); o.value = v.id;
+                o.textContent = v.title; $("voice").appendChild(o); }
+      $("voice").value = v.id;
+      setStatus("voice set to " + v.title);
+    };
+    row.append(name, use);
+    out.appendChild(row);
+  }
+  setStatus(`${voices.length} voices found`);
+};
+
+// Spacebar push-to-talk, when not typing.
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && e.target.tagName !== "INPUT" && !recording) {
+    e.preventDefault(); startRec();
+  }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space" && e.target.tagName !== "INPUT" && recording) {
+    e.preventDefault(); stopRec();
+  }
+});
+
+boot();
+</script>
+</body>
+</html>

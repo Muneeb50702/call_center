@@ -171,7 +171,11 @@ def _verify_spoken(sentence: str, fsm, telemetry=None, *, check_entities: bool =
     """Run the anti-hallucination verifier over one draft sentence, grounding it in
     the tools called this turn plus what the caller just said. Returns the
     (possibly redacted) text to actually synthesize."""
-    sources = list(fsm.context.turn_facts) + [fsm.context.last_user_text]
+    # standing_facts are campaign proof, pre-verified against the corpus, so the
+    # agent can pitch them without a lookup and without the verifier redacting it.
+    sources = (list(fsm.context.turn_facts)
+               + list(getattr(fsm.context, "standing_facts", []))
+               + [fsm.context.last_user_text])
     if check_entities:
         # The agent's own company and name are always legitimate to say, even on a
         # turn that called no tool. Without these the entity check flags the agent
@@ -272,13 +276,22 @@ class NexusAgent(Agent):
 
         check_entities = self.verify_entities
 
-        # Only ElevenLabs v3 performs inline emotion tags; every other engine
-        # speaks them as words. Decide ONCE per turn which behaviour applies.
+        # Some engines PERFORM inline emotion tags; the rest pronounce them as
+        # words. Decide ONCE per turn which behaviour applies.
+        #
+        # Read off the voice profile rather than comparing model names: both
+        # ElevenLabs v3 and Fish S2 perform tags, and a name check meant every
+        # new expressive engine had to remember to edit this line. The profile
+        # carries the capability, so registering a voice is enough.
         supports_emotion_tags = False
         try:
-            active = self.session.tts
-            model = getattr(getattr(active, "profile", None), "model", "") or ""
-            supports_emotion_tags = model == "eleven_v3"
+            profile = getattr(self.session.tts, "profile", None)
+            supports_emotion_tags = bool(
+                getattr(profile, "supports_emotion_tags", False)
+                # Back-compat: a profile predating the flag, or a bare TTS with
+                # no profile at all, still gets v3's historic behaviour.
+                or getattr(profile, "model", "") == "eleven_v3"
+            )
         except Exception:
             pass
 

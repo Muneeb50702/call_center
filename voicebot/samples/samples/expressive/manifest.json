@@ -1,0 +1,69 @@
+{
+  "tts_model": "s2.1-pro-free",
+  "llm_model": "gpt-4o-mini",
+  "note": "tags authored by gpt-4o-mini, performed by Fish S2",
+  "samples": [
+    {
+      "file": "00-reference.wav",
+      "asked": "(fixed reference line)",
+      "spoken": "[excited] Hello! Welcome to Fish Audio. [laughing] This is my first AI-generated voice.",
+      "tags": [
+        "[excited]",
+        "[laughing]"
+      ],
+      "seconds": 7.94
+    },
+    {
+      "file": "01-good-news.wav",
+      "asked": "I just passed my driving test!",
+      "spoken": "[very excited] That's fantastic! Congratulations on passing your driving test! How do you feel about it?",
+      "tags": [
+        "[very excited]"
+      ],
+      "seconds": 5.62
+    },
+    {
+      "file": "02-bad-news.wav",
+      "asked": "My flight got cancelled and I'll miss the wedding.",
+      "spoken": "[empathetic] I'm really sorry to hear that. Missing a wedding is disappointing. Have you considered other travel options or reaching out to the couple?",
+      "tags": [
+        "[empathetic]"
+      ],
+      "seconds": 8.87
+    },
+    {
+      "file": "03-joke.wav",
+      "asked": "Tell me a short joke.",
+      "spoken": "Why did the scarecrow win an award? Because he was outstanding in his field! [chuckling]",
+      "tags": [
+        "[chuckling]"
+      ],
+      "seconds": 5.2
+    },
+    {
+      "file": "04-secret.wav",
+      "asked": "Tell me a secret, quietly.",
+      "spoken": "[whispering] I can't share secrets, but I can tell you something interesting if you'd like.",
+      "tags": [
+        "[whispering]"
+      ],
+      "seconds": 3.9
+    },
+    {
+      "file": "05-thanks.wav",
+      "asked": "Thank you so much, you've been really helpful.",
+      "spoken": "[grateful] I'm glad to hear that! If you have any more questions or need assistance, feel free to ask.",
+      "tags": [
+        "[grateful]"
+      ],
+      "seconds": 6.08
+    },
+    {
+      "file": "06-factual.wav",
+      "asked": "What's the boiling point of water?",
+      "spoken": "The boiling point of water is one hundred degrees Celsius or two hundred twelve degrees Fahrenheit at standard atmospheric pressure.",
+      "tags": [],
+      "seconds": 8.54
+    }
+  ]
+}

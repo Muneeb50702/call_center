@@ -49,7 +49,12 @@ SAMPLE_RATE = 24000
 # before synthesis so a non-v3 voice can never read them aloud. To get emotional
 # tags back, pick an "ElevenLabs ... (v3)" voice in the demo's picker — switching
 # is live and takes effect on the next sentence.
-DEFAULT_VOICE_ID = "deepgram:aura-2-asteria-en"
+# Sales default is Fish S2: it is the only engine in the sales path that
+# PERFORMS the [warmly] / [break] emotion markers the campaign opener is written
+# with, so on any other voice those markers are stripped and the opener loses the
+# delivery it was written for. resolve_voice() degrades to the Deepgram default
+# below if FISH_API_KEY is absent, so this is safe on a deployment without Fish.
+DEFAULT_VOICE_ID = "fish:65c0b8155c464a648161af8877404f11"  # Brian (British)
 # Fallback when the configured default is unavailable.
 DEEPGRAM_DEFAULT_VOICE_ID = "deepgram:aura-2-asteria-en"
 # The dispatch product shipped on Apollo; keep that the dispatch default so this
@@ -75,6 +80,13 @@ class VoiceProfile:
     # Provider-specific tuning (currently ElevenLabs stability/style/speed).
     # Kept opaque so adding a provider knob does not change this dataclass.
     settings: tuple[tuple[str, float | bool], ...] = field(default_factory=tuple)
+    # True for engines that PERFORM inline [bracket] emotion markers rather than
+    # pronouncing them. Read by state/agents.py to decide whether to keep or
+    # strip tags before synthesis, and by the prompt layer to decide whether to
+    # ask the LLM for them at all. A property of the voice, not a model-name
+    # check, so adding an expressive engine does not mean editing a condition in
+    # another module.
+    supports_emotion_tags: bool = False
 
     def settings_dict(self) -> dict:
         return dict(self.settings)
@@ -89,6 +101,9 @@ class VoiceProfile:
             "traits": list(self.traits),
             "blurb": self.blurb,
             "tags": list(self.tags),
+            # Surfaced to the demo so the UI can mark which voices actually act
+            # the emotion markers the transcript shows.
+            "supports_emotion_tags": self.supports_emotion_tags,
         }
 
 
@@ -250,16 +265,75 @@ _ELEVENLABS_SEED: tuple[VoiceProfile, ...] = (
 )
 
 
+# ── Fish Audio ───────────────────────────────────────────────────────────────
+#
+# The second engine here that PERFORMS inline emotion markers, and the easier of
+# the two to run: S2 takes [excited] / [empathetic] / [whispering] / [break] over
+# plain HTTP streaming, with none of v3's WebSocket problem.
+#
+# Model note: `s2.1-pro-free` is the default because Fish bills API credit
+# separately from platform credit, and on a key without it every paid model
+# (s2.1-pro, s2-pro, s1) 402s. The free tier is the same generation as
+# s2.1-pro — it carries no latency or DPA guarantee, but it sounds the same.
+# Override with FISH_MODEL once credit is topped up.
+#
+# Markers differ from ElevenLabs v3's in an important way: an unrecognised tag
+# is silently ignored rather than spoken. [bananas], [smirks] and
+# [qwertyuiop asdfgh] were each tested and none was vocalised, where v3
+# measurably reads a nonsense tag aloud. That is why tts/fish_tts.py sanitizes
+# permissively while tts/eleven_v3.py needs a strict whitelist.
+#
+# Voice ids are stable public library ids, verified live against /model.
+FISH_MODEL = os.getenv("FISH_MODEL", "s2.1-pro-free")
+
+
+def _fish(ref: str, label: str, gender: str, accent: str, blurb: str,
+          tags: tuple[str, ...] = ()) -> VoiceProfile:
+    return VoiceProfile(
+        voice_id=f"fish:{ref}" if ref else "fish:default",
+        provider="fish",
+        model=FISH_MODEL,
+        voice=ref,
+        label=label,
+        gender=gender,
+        accent=accent,
+        traits=("emotional", "expressive", "natural"),
+        blurb=blurb,
+        tags=tags + ("emotional",),
+        supports_emotion_tags=True,
+    )
+
+
+_FISH_VOICES: tuple[VoiceProfile, ...] = (
+    _fish("", "Fish S2 (default)", "unknown", "American",
+          "Fish S2 house voice. Performs [excited] / [sighing] / [break] inline.",
+          tags=("recommended",)),
+    _fish("65c0b8155c464a648161af8877404f11", "Brian (British)", "masculine", "British",
+          "British male, measured and consultative."),
+    _fish("078eaa5208ca42a1909d2e6fac9c93f7", "Alex (American)", "masculine", "American",
+          "Young American male, bright and quick."),
+    _fish("8647949bec1b4af79cefa7c2bbb61748", "Australian female", "feminine", "Australian",
+          "Australian female, warm and informal."),
+    _fish("d4f4d5bbac3e4cb492c42e6a5b2b237b", "Irish", "unknown", "Irish",
+          "Irish lilt. Memorable and disarming on a cold call."),
+    _fish("aca9d9ba6be040e69ff2bea641767919", "Scottish", "unknown", "Scottish",
+          "Scottish. Distinctive without being hard to follow."),
+    _fish("8043ac7c1e054347ac463915e57bb601", "Aarav (Indian)", "masculine", "Indian",
+          "Indian English, deep and unhurried."),
+)
+
+
 def _provider_available(provider: str) -> bool:
     return bool(os.getenv({
         "deepgram": "DEEPGRAM_API_KEY",
         "cartesia": "CARTESIA_API_KEY",
         "elevenlabs": "ELEVENLABS_API_KEY",
+        "fish": "FISH_API_KEY",
     }.get(provider, ""), ""))
 
 
 _catalog: dict[str, VoiceProfile] = {
-    v.voice_id: v for v in _ELEVENLABS_SEED + _DEEPGRAM_VOICES + _CARTESIA_SEED
+    v.voice_id: v for v in _ELEVENLABS_SEED + _FISH_VOICES + _DEEPGRAM_VOICES + _CARTESIA_SEED
 }
 
 
@@ -267,18 +341,31 @@ def register_voice(profile: VoiceProfile) -> None:
     _catalog[profile.voice_id] = profile
 
 
+# Picker order. Sorting providers alphabetically put `elevenlabs` ahead of
+# `fish` and, combined with discovery registering ~36 ElevenLabs entries, buried
+# the Fish voices at the bottom of a list nobody scrolls. Rank them explicitly:
+# Fish leads because it is the engine that performs the emotion markers the
+# campaign is written for, Deepgram follows as the proven fallback.
+_PROVIDER_RANK = {"fish": 0, "deepgram": 1, "elevenlabs": 2, "cartesia": 3}
+
+
 def list_voices(*, available_only: bool = True) -> list[VoiceProfile]:
     """The voice catalog, by default filtered to providers that have a key.
 
-    Ordering is deliberate: recommended voices first, then by provider, so the
-    demo picker's first option is always a good one.
+    Ordering is deliberate: recommended voices first, then by provider priority
+    (not alphabetically), so the demo picker's first option is always a good one
+    and the expressive engine is visible without scrolling.
     """
     voices = list(_catalog.values())
     if available_only:
         voices = [v for v in voices if _provider_available(v.provider)]
     return sorted(
         voices,
-        key=lambda v: (0 if "recommended" in v.tags else 1, v.provider, v.label),
+        key=lambda v: (
+            0 if "recommended" in v.tags else 1,
+            _PROVIDER_RANK.get(v.provider, 9),
+            v.label,
+        ),
     )
 
 
@@ -360,6 +447,17 @@ def build_tts(voice_id: str = "", *, fallback: str = DEFAULT_VOICE_ID) -> tts_ba
     if profile.provider == "deepgram":
         from livekit.plugins import deepgram
         return deepgram.TTS(model=profile.model, sample_rate=SAMPLE_RATE)
+
+    if profile.provider == "fish":
+        # Fish emits PCM at whatever sample_rate we ask for, and fish_tts pins it
+        # to SAMPLE_RATE, so a swap to/from Fish never resamples.
+        from tts.fish_tts import create_fish_tts
+
+        return create_fish_tts(
+            api_key=os.getenv("FISH_API_KEY", ""),
+            reference_id=profile.voice,
+            model=profile.model,
+        )
 
     if profile.provider == "cartesia":
         from livekit.plugins import cartesia
@@ -530,7 +628,7 @@ class SwitchableTTS(tts_base.TTS):
         self._cache.clear()
 
 
-async def discover_elevenlabs_voices(*, limit: int = 12) -> int:
+async def discover_elevenlabs_voices(*, limit: int = 4) -> int:
     """Pull the account's ElevenLabs voices into the catalog.
 
     Voice ids are account-scoped, so hardcoding a list would rot as soon as the
@@ -538,6 +636,12 @@ async def discover_elevenlabs_voices(*, limit: int = 12) -> int:
     Flash v2.5 (fastest, the realtime recommendation) and once on Turbo v2.5
     (slightly richer), so the demo's picker can A/B latency against quality on
     the same voice.
+
+    `limit` is deliberately small. Each discovered voice is registered on THREE
+    models, so a limit of 12 produced 36 ElevenLabs entries and a picker that was
+    two-thirds one vendor — the Fish and Deepgram voices were off the bottom of
+    the list. Four voices gives twelve entries, which still demonstrates the
+    latency/quality A/B without drowning the catalog.
 
     Best-effort — any failure leaves the seeded default and the rest of the
     catalog untouched.
@@ -570,10 +674,16 @@ async def discover_elevenlabs_voices(*, limit: int = 12) -> int:
         description = (voice.get("description") or labels.get("description") or "").strip()
 
         for model, suffix, tuning, tags in (
-            # v3 first: it is the only one that speaks [sighs]/[laughs] inline, and
-            # it is the demo default. ~125ms slower than Flash on the same
-            # transport — worth it for a call that has to feel human.
-            (ELEVEN_MODEL_EXPRESSIVE, ":v3", _EXPRESSIVE, ("recommended", "emotional")),
+            # v3 first: it is the only one that speaks [sighs]/[laughs] inline.
+            # ~125ms slower than Flash on the same transport — worth it for a
+            # call that has to feel human.
+            #
+            # NOT tagged "recommended": that tag is a CURATION signal that lifts a
+            # voice to the top of the picker, and these are discovered from
+            # whatever happens to be in the account — nobody has listened to them.
+            # Tagging them recommended pushed a dozen unvetted voices above the
+            # curated ones and made the picker look like an ElevenLabs catalog.
+            (ELEVEN_MODEL_EXPRESSIVE, ":v3", _EXPRESSIVE, ("emotional",)),
             (ELEVEN_MODEL_REALTIME, "", _ENERGETIC, ("fastest", "expressive")),
             (ELEVEN_MODEL_QUALITY, ":turbo", _WARM, ("expressive",)),
         ):

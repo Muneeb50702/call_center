@@ -651,6 +651,15 @@
   color: var(--text);
 }
 
+/* Marks a voice that performs inline [excited]/[sighing] markers rather than
+   having them stripped before synthesis. */
+.voiceEmotive {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--accent, #4fd1c5);
+  vertical-align: baseline;
+}
+
 .voiceMeta {
   font-size: 10.5px;
   color: var(--dim);

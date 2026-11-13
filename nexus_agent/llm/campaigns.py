@@ -47,6 +47,17 @@ class Campaign:
     proof_search: str            # the KB query that fetches relevant evidence
     close_target: str            # what "won" means on THIS call
     energy: str                  # delivery note for the opener
+    # Facts the agent may state WITHOUT calling search_knowledge_base, because
+    # each was verified against the corpus when this campaign was written.
+    #
+    # These exist to stop the agent narrating a lookup ("let me pull that up")
+    # during its own pitch. A real rep knows their own case studies cold; making
+    # the agent search before it can say what it built is what made it sound
+    # junior. Anything NOT listed here still requires a tool call, so the
+    # grounding guarantee is unchanged — the set is just pre-verified rather than
+    # verified live. They are also loaded into the FSM's standing_facts so the
+    # pre-TTS verifier treats them as grounded.
+    preloaded_facts: tuple[str, ...] = field(default_factory=tuple)
     # The literal opening line, with ElevenLabs v3 Audio Tags. Pre-rendered on v3
     # for a full-emotion first impression (tts/expressive_opener.py), then handoff
     # to streaming Flash for the rest of the call. Fixed text — states no company
@@ -58,11 +69,28 @@ class Campaign:
         hyp = "\n".join(f'  - "{h}"' for h in self.hypotheses)
         offers = "\n".join(f"  - If they say: {pain}\n      → You offer: {cap}"
                            for pain, cap in self.offer_map)
+        preloaded = ""
+        if self.preloaded_facts:
+            facts = "\n".join(f"  - {f}" for f in self.preloaded_facts)
+            preloaded = f"""
+WHAT YOU ALREADY KNOW — SAY IT, DO NOT LOOK IT UP:
+These are verified and yours to state the moment they are relevant. You do NOT
+need a tool call for any of them:
+{facts}
+
+You are a rep who knows their own work cold. NEVER narrate a lookup — no "let me
+pull that up", "one moment", "let me check", "bear with me", "give me a second".
+A cold caller who has to go and check what their own company built has already
+lost the call. If a question needs the knowledge base, call it SILENTLY and
+answer when it returns — the caller should never hear that a tool exists.
+"""
+
         return f"""--- WHO YOU ARE CALLING (this call, specifically) ---
 You are calling {self.prospect_label}.
 
 THEIR WORLD — you already understand this, so do not ask them to explain it:
 {self.prospect_world}
+{preloaded}
 
 WHY YOU CALLED — this is your one justification for interrupting them:
 {self.reason_for_call}
@@ -196,11 +224,138 @@ DIGITAL_MARKETING_AGENCY = Campaign(
     ),
 )
 
+# ── Logistics operator ───────────────────────────────────────────────────────
+#
+# Chosen for the demo because it is the best-EVIDENCED pitch in the corpus, and
+# on a sales call evidence is what separates a pitch from a claim. Everything
+# below traces to 15-project-saas-trucking-dispatch.md:
+#   multi-tenant logistics SaaS for Canadian trucking  → project overview
+#   carrier + order management, multi-stop routing     → "what Lumenia built"
+#   QuickBooks integration, automated invoicing        → named testimonial
+#   full-stack engineering as the role                 → project overview
+#
+# NOTE ON WHAT IT MUST NOT SELL: there is no AI-voice-agent capability anywhere
+# in the corpus — the chatbot page states plainly that it publishes no case
+# studies, and no page documents voice or telephony work. So this agent must
+# never pitch "we build AI phone agents", however tempting that is while one is
+# demonstrably talking to you. The pre-TTS verifier would redact it and the
+# agent would audibly hedge, which is worse than not saying it. Conversational
+# work is grounded ONLY as the AI Agentic Automation / AI Development service
+# lines, and it is framed that way below.
+LOGISTICS_OPERATOR = Campaign(
+    campaign_id="logistics-dispatch-automation",
+    prospect_label="the owner or operations lead at a small trucking or logistics company",
+    prospect_world=(
+        "  They move freight with a fleet they can count. Dispatch runs on phone\n"
+        "  calls, a whiteboard and somebody's spreadsheet. The same person who\n"
+        "  books loads also chases paperwork, and invoicing happens at night or on\n"
+        "  a Sunday because that is the only quiet hour. They have looked at the big\n"
+        "  TMS platforms and found them priced for fleets ten times their size and\n"
+        "  full of modules they will never open. Nothing they use talks to anything\n"
+        "  else, so the same load gets typed in three times."
+    ),
+    reason_for_call=(
+        "  You have already built exactly this for a Canadian trucking operator — a\n"
+        "  multi-tenant dispatch platform with carrier and order management,\n"
+        "  multi-stop route coordination, and QuickBooks wired in so invoicing stops\n"
+        "  being a manual night job. You are calling operators who are still doing\n"
+        "  that by hand."
+    ),
+    hypotheses=(
+        "Most operators your size tell me invoicing is the thing that eats their "
+        "evenings — the driving pays, the paperwork just costs. Is that about right "
+        "for you?",
+        "Usually it's one of two things: either dispatch lives in someone's head and "
+        "a spreadsheet, or the accounting side never matches what actually moved. "
+        "Which one bites you more?",
+        "Most people I call have looked at the big TMS platforms and walked away "
+        "because they're priced for a fleet ten times the size. Has that been your "
+        "experience too?",
+    ),
+    offer_map=(
+        ("invoicing is manual and eats evenings",
+         "the QuickBooks integration from the trucking platform — the operator we "
+         "built it for says their invoicing is fully automated now"),
+        ("dispatch lives in a spreadsheet and someone's head",
+         "the dispatch system itself: carrier and order management, with dispatchers "
+         "building multi-stop trip sequences instead of holding routes in memory"),
+        ("the big TMS platforms are too expensive and too heavy",
+         "a platform built for their operation specifically — the trucking system was "
+         "custom full-stack work, not a seat licence for software built for someone else"),
+        ("our systems don't talk to each other",
+         "systems integration work — the trucking build connected dispatch and "
+         "accounting so a load is entered once"),
+        ("we want to grow without hiring more back office",
+         "AI agentic automation on the repeatable admin, so headcount tracks trucks "
+         "rather than paperwork"),
+    ),
+    # Every line traced to 15-project-saas-trucking-dispatch.md before being put
+    # here. Phrasing stays close to the corpus wording so the agent cannot drift
+    # into a stronger claim than the source supports — note "a Canadian trucking
+    # enterprise", never a named client, because the corpus names none.
+    preloaded_facts=(
+        "Lumenia built a multi-tenant SaaS trucking management and dispatch "
+        "platform for Canadian trucking enterprises. Lumenia's role was "
+        "full-stack engineering.",
+        "That platform does carrier management and order management, and lets "
+        "dispatchers build complex trip sequences and coordinate multi-stop routes.",
+        "It integrates QuickBooks. A logistics founder Lumenia worked with is "
+        "quoted saying: Lumenia rebuilt our dispatch system from scratch and "
+        "integrated QuickBooks flawlessly, our invoicing is fully automated now.",
+        "Lumenia's published logistics work also includes Ezanias TMS, a "
+        "peer-to-peer rideshare platform, and My Moving Journey.",
+        "Lumenia's other service lines include AI agentic automation, AI "
+        "development and integration, multi-tenant SaaS development, and "
+        "chatbot and conversational work.",
+    ),
+    proof_search="trucking dispatch platform QuickBooks integration multi-stop routing",
+    close_target=(
+        "  A booked call with the team — a specific day, and an email address you have\n"
+        "  read back to them. You are NOT closing a build on this call and must not\n"
+        "  try. Nobody signs a development contract to a stranger on a cold call, and\n"
+        "  pushing for it is the exact moment a caller starts sounding like a bot.\n"
+        "  Book the meeting, then get off the phone."
+    ),
+    energy=(
+        "  Grounded and unhurried. These are practical people who are busy and have\n"
+        "  been called by a lot of software salesmen — the way to lose them is to\n"
+        "  sound polished. Be plain, be concrete, use their vocabulary (loads, lanes,\n"
+        "  deadhead, invoicing), and never oversell. One real detail about what you\n"
+        "  built beats three adjectives about how good it is.\n"
+        "  Match their energy DOWNWARD, never upward: if they are short with you, get\n"
+        "  quieter and more direct, not brighter. Pushing energy at a guarded person\n"
+        "  is the single clearest tell of a script."
+    ),
+    # Emotion markers here are Fish S2 / ElevenLabs v3 syntax and are STRIPPED
+    # automatically on engines that would pronounce them (state/agents.py), so
+    # this one line is safe on every voice in the catalog.
+    #
+    # Three markers, each doing a specific job, and none of them decoration:
+    #   [warmly]        sets one consistent register for the whole opener
+    #   [break]         a real beat after admitting the cold call — the pause is
+    #                   what makes the admission read as candour rather than a
+    #                   scripted line delivered at speed
+    #   [slightly amused] on the exit offer, so "tell me to get lost" lands as
+    #                   self-aware rather than as pleading
+    # MEASURED, not estimated: this renders at 12.2s on Fish. The first draft was
+    # a sentence longer and measured 17.5s, which is well into the range this
+    # file already flags as a failed opener — a cold call is lost in the first
+    # fifteen seconds, and [break] spends real time on top of the words. If you
+    # edit this line, re-synthesize it and check the duration before shipping.
+    v3_opener=(
+        "[warmly] Hey — I'm {agent} from {company}. "
+        "Straight up, this is a cold call. [break] "
+        "We built the dispatch and invoicing system for a Canadian trucking outfit. "
+        "[slightly amused] Thirty seconds, then you can tell me to get lost?"
+    ),
+)
+
 CAMPAIGNS: dict[str, Campaign] = {
     DIGITAL_MARKETING_AGENCY.campaign_id: DIGITAL_MARKETING_AGENCY,
+    LOGISTICS_OPERATOR.campaign_id: LOGISTICS_OPERATOR,
 }
 
-DEFAULT_CAMPAIGN_ID = DIGITAL_MARKETING_AGENCY.campaign_id
+DEFAULT_CAMPAIGN_ID = LOGISTICS_OPERATOR.campaign_id
 
 
 def get_campaign(campaign_id: str = "") -> Campaign | None:
@@ -220,8 +375,13 @@ def opening_line(campaign: Campaign, agent_name: str, company_name: str) -> str:
         f"Deliver the opener NOW, in one breath, professionally and with real energy.\n"
         f"  1. \"Hey, this is {agent_name} from {company_name}.\"\n"
         f"  2. Say plainly that you're reaching out cold — do not pretend otherwise.\n"
-        f"  3. ONE sentence on why you called THEM specifically. Call "
-        f"search_knowledge_base FIRST and use only what it returns:\n"
+        # NO tool call here, deliberately. Instructing a search before the
+        # greeting is what produced "let me pull that up, one moment" ahead of
+        # "hi, this is Sarah" — the model narrated the lookup it had been told to
+        # perform. The reason for calling is campaign text, already verified
+        # against the corpus, so it needs no retrieval.
+        f"  3. ONE sentence on why you called THEM specifically. You already know "
+        f"this — say it, do not look anything up:\n"
         f"     {campaign.reason_for_call.strip()}\n"
         f"  4. Ask for a specific slice of time and hand them the exit:\n"
         f"     \"Can I borrow ninety seconds to tell you why, and if it's not "

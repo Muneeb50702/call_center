@@ -56,7 +56,7 @@
         "Without a campaign the agent re-improvises the call each run, which is",
         "what read as inconsistency."
       ],
-      "campaign_id": "dm-agency-white-label",
+      "campaign_id": "logistics-dispatch-automation",
       "knowledge_corpus": "lumenia",
       "greeting_script": "",
       "sip_numbers": [],

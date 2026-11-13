@@ -18,6 +18,16 @@ export interface VoiceProfile {
   traits: string[];
   blurb: string;
   tags: string[];
+  /**
+   * True when the engine PERFORMS the [excited] / [sighing] / [break] markers the
+   * LLM writes, rather than having them stripped before synthesis (Fish S2 and
+   * ElevenLabs v3 do; Deepgram and Cartesia do not).
+   *
+   * Worth surfacing because the transcript panel shows what the model WROTE. On a
+   * non-expressive voice the markers are scrubbed on the way to the speaker, so
+   * without a marker in the UI the demo looks like it is ignoring its own output.
+   */
+  supports_emotion_tags?: boolean;
 }
 
 export interface KbSource {
